@@ -1,0 +1,3262 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>星夜騎士 · Starry Night 3D Impasto</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #07102a;
+    color: #eef2ff;
+    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  #glCanvas {
+    position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
+    touch-action: none;
+  }
+
+  /* Minimal painterly glassmorphic HUD */
+  .hud-top {
+    position: fixed;
+    top: max(12px, env(safe-area-inset-top));
+    left: max(12px, env(safe-area-inset-left));
+    right: max(12px, env(safe-area-inset-right));
+    z-index: 20; pointer-events: none;
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 8px;
+  }
+  .title-card {
+    pointer-events: auto;
+    background: rgba(8, 17, 44, 0.58);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 212, 118, 0.24);
+    border-radius: 12px;
+    padding: 8px 13px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  .title-main {
+    font-size: 15px; font-weight: 700; letter-spacing: 0.04em;
+    color: #ffd875;
+    text-shadow: 0 1px 6px rgba(255, 180, 50, 0.35);
+  }
+  .stats-line {
+    margin-top: 3px;
+    font-size: 11px; color: #b7c8eb;
+    font-variant-numeric: tabular-nums;
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  }
+  .stats-dot { opacity: 0.45; }
+
+  .hud-top-right {
+    pointer-events: auto;
+    display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end;
+  }
+  .pill-btn {
+    cursor: pointer;
+    background: rgba(9, 19, 48, 0.62);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(155, 188, 255, 0.28);
+    color: #dce7ff;
+    border-radius: 999px;
+    padding: 7px 13px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.12s ease, color 0.18s ease;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  }
+  .pill-btn:hover { background: rgba(20, 38, 86, 0.78); border-color: rgba(255, 212, 118, 0.5); }
+  .pill-btn:active { transform: scale(0.96); }
+  .pill-btn.active {
+    background: rgba(212, 134, 28, 0.34);
+    border-color: rgba(255, 210, 96, 0.8);
+    color: #ffe7a3;
+  }
+
+  .help-panel {
+    position: fixed; top: 58px; right: max(12px, env(safe-area-inset-right));
+    z-index: 25; width: min(310px, calc(100vw - 24px));
+    background: rgba(8, 17, 44, 0.84);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 212, 118, 0.28);
+    border-radius: 14px; padding: 13px 15px;
+    font-size: 12px; line-height: 1.65; color: #d6e2ff;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    display: none;
+  }
+  .help-panel.open { display: block; }
+  .help-panel h3 { font-size: 13px; color: #ffd875; margin-bottom: 6px; }
+  .help-panel p { margin-bottom: 6px; }
+  .help-panel kbd {
+    display: inline-block; padding: 1px 5px; border-radius: 4px;
+    background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.2);
+    font-size: 11px; font-family: monospace; color: #ffe7a3;
+  }
+
+  @media (max-width: 680px) {
+    .hud-top-right { justify-content: flex-start; }
+    .help-panel { top: 108px; }
+  }
+
+  /* Loading splash */
+  #loadingOverlay {
+    position: fixed; inset: 0; z-index: 50;
+    background: radial-gradient(circle at 60% 35%, #16306e 0%, #07102a 75%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    transition: opacity 0.55s ease;
+  }
+  #loadingOverlay.hidden { opacity: 0; pointer-events: none; }
+  .loader-title { font-size: 22px; font-weight: 700; color: #ffd875; letter-spacing: 0.08em; }
+  .loader-sub { font-size: 13px; color: #a9c0ef; }
+  .loader-bar-wrap {
+    width: min(280px, 72vw); height: 6px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1); overflow: hidden;
+  }
+  .loader-bar {
+    width: 0%; height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, #3c8dad, #ffd464);
+    transition: width 0.2s ease;
+  }
+
+  /* Mobile touch controls */
+  .touch-controls {
+    position: fixed; inset: 0; pointer-events: none; z-index: 18;
+    display: none;
+  }
+  .touch-controls.visible { display: block; }
+
+  .joystick-zone {
+    position: fixed;
+    left: max(20px, env(safe-area-inset-left));
+    bottom: max(22px, env(safe-area-inset-bottom));
+    width: 126px; height: 126px;
+    border-radius: 50%;
+    background: rgba(10, 22, 54, 0.45);
+    border: 2px solid rgba(150, 188, 255, 0.35);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    pointer-events: auto;
+    touch-action: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .joystick-knob {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #ffe28a, #d18c26);
+    border: 2px solid rgba(255, 240, 195, 0.75);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    transform: translate(0px, 0px);
+    pointer-events: none;
+  }
+  .jump-btn {
+    position: fixed;
+    right: max(22px, env(safe-area-inset-right));
+    bottom: max(30px, env(safe-area-inset-bottom));
+    width: 84px; height: 84px; border-radius: 50%;
+    background: rgba(212, 136, 30, 0.42);
+    border: 2px solid rgba(255, 214, 110, 0.65);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    color: #fff2c6; font-size: 15px; font-weight: 700; letter-spacing: 0.06em;
+    pointer-events: auto; touch-action: none;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+    transition: transform 0.08s ease, background 0.12s ease;
+  }
+  .jump-btn:active, .jump-btn.pressed {
+    transform: scale(0.92);
+    background: rgba(242, 165, 48, 0.68);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="glCanvas"></canvas>
+
+<div id="loadingOverlay">
+  <div class="loader-title">星夜騎士 · STARRY NIGHT</div>
+  <div class="loader-sub" id="loaderText">正在鋪設油畫筆觸與星夜山谷…</div>
+  <div class="loader-bar-wrap"><div class="loader-bar" id="loaderBar"></div></div>
+</div>
+
+<div class="hud-top">
+  <div class="title-card">
+    <div class="title-main">星夜騎士 · 3D 油畫世界</div>
+    <div class="stats-line">
+      <span id="statFps">-- FPS</span>
+      <span class="stats-dot">·</span>
+      <span id="statScale">100%</span>
+      <span class="stats-dot">·</span>
+      <span id="statStrokes">-- 筆觸</span>
+      <span class="stats-dot">·</span>
+      <span id="statPhysics">物理載入中</span>
+    </div>
+  </div>
+
+  <div class="hud-top-right">
+    <button id="btnAutoRide" class="pill-btn active" title="切換自動沿小徑騎行並自動起跳">自動騎行：開</button>
+    <button id="btnTour" class="pill-btn" title="切換全景自動運鏡巡遊 (T)">全景巡遊：關</button>
+    <button id="btnHelp" class="pill-btn">操作說明</button>
+  </div>
+</div>
+
+<div id="helpPanel" class="help-panel">
+  <h3>操作方式</h3>
+  <p><strong>電腦鍵盤滑鼠：</strong><br/>
+    <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 騎乘移動 · <kbd>Shift</kbd> 奔跑<br/>
+    <kbd>Space</kbd> 跳躍障礙 · <kbd>T</kbd> 全景巡遊<br/>
+    滑鼠左鍵拖曳旋轉視角 · 滾輪縮放視距
+  </p>
+  <p><strong>手機觸控：</strong><br/>
+    左下虛擬搖桿移動（推到底奔跑）· 右下跳躍<br/>
+    單指拖曳轉視角 · 雙指捏合縮放
+  </p>
+  <p style="color:#ffd875;margin-bottom:0;">預設為自動沿環形小徑騎行並自動起跳；隨時操作方向或跳躍即可接管手動控制。</p>
+</div>
+
+<div id="touchControls" class="touch-controls">
+  <div id="joystickZone" class="joystick-zone">
+    <div id="joystickKnob" class="joystick-knob"></div>
+  </div>
+  <button id="btnJumpTouch" class="jump-btn">跳躍</button>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // =========================================================================
+  // 0. Environment & URL Options
+  // =========================================================================
+  const urlParams = new URLSearchParams(window.location.search);
+  const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) ||
+                        window.matchMedia('(pointer: coarse)').matches;
+  const forceMobileMode = urlParams.get('mobile') === '1';
+  const isMobile = isTouchDevice || forceMobileMode;
+  const strokeBudgetScale = urlParams.get('quality') === 'low' ? 0.35 :
+                            urlParams.get('quality') === 'med' ? 0.65 :
+                            (isMobile ? 0.40 : 1.0);
+  const forceBuiltinPhysics = urlParams.get('physics') === 'builtin';
+
+  const canvas = document.getElementById('glCanvas');
+  const gl = canvas.getContext('webgl2', {
+    antialias: false,
+    alpha: false,
+    powerPreference: 'high-performance',
+    preserveDrawingBuffer: urlParams.get('preserve') === '1'
+  });
+
+  if (!gl) {
+    document.getElementById('loaderText').textContent = '此瀏覽器不支援 WebGL2。';
+    return;
+  }
+
+  // UI refs
+  const loaderOverlay = document.getElementById('loadingOverlay');
+  const loaderText = document.getElementById('loaderText');
+  const loaderBar = document.getElementById('loaderBar');
+  const statFps = document.getElementById('statFps');
+  const statScale = document.getElementById('statScale');
+  const statStrokes = document.getElementById('statStrokes');
+  const statPhysics = document.getElementById('statPhysics');
+  const btnAutoRide = document.getElementById('btnAutoRide');
+  const btnTour = document.getElementById('btnTour');
+  const btnHelp = document.getElementById('btnHelp');
+  const helpPanel = document.getElementById('helpPanel');
+  const touchControls = document.getElementById('touchControls');
+  const joystickZone = document.getElementById('joystickZone');
+  const joystickKnob = document.getElementById('joystickKnob');
+  const btnJumpTouch = document.getElementById('btnJumpTouch');
+
+  if (isMobile) touchControls.classList.add('visible');
+
+  // =========================================================================
+  // 1. Deterministic PRNG & Vector / Matrix Math
+  // =========================================================================
+  let rngState = 188906; // Van Gogh painted Starry Night in June 1889
+  function rand() {
+    rngState = (rngState * 1664525 + 1013904223) >>> 0;
+    return rngState / 4294967296;
+  }
+  function randRange(a, b) { return a + (b - a) * rand(); }
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function mix(a, b, t) { return a + (b - a) * t; }
+  function smoothstep(e0, e1, x) {
+    const t = clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+  }
+  function hash2(x, y) {
+    const h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+    return h - Math.floor(h);
+  }
+  function valueNoise2(x, y) {
+    const ix = Math.floor(x), iy = Math.floor(y);
+    const fx = x - ix, fy = y - iy;
+    const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+    const a = hash2(ix, iy), b = hash2(ix + 1, iy);
+    const c = hash2(ix, iy + 1), d = hash2(ix + 1, iy + 1);
+    return mix(mix(a, b, ux), mix(c, d, ux), uy);
+  }
+  function fbm2(x, y, oct = 4) {
+    let val = 0, amp = 0.5, freq = 1;
+    for (let i = 0; i < oct; i++) {
+      val += amp * valueNoise2(x * freq, y * freq);
+      freq *= 2.03; amp *= 0.5;
+    }
+    return val;
+  }
+
+  function norm3(x, y, z) {
+    const l = Math.hypot(x, y, z) || 1;
+    return [x / l, y / l, z / l];
+  }
+  function cross3(a, b) {
+    return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+  }
+  function dot3(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+
+  function mat4Perspective(fovY, aspect, near, far) {
+    const f = 1.0 / Math.tan(fovY * 0.5);
+    const nf = 1.0 / (near - far);
+    return new Float32Array([
+      f / aspect, 0, 0, 0,
+      0, f, 0, 0,
+      0, 0, (far + near) * nf, -1,
+      0, 0, (2 * far * near) * nf, 0
+    ]);
+  }
+
+  function mat4LookAt(eye, target, up) {
+    let zx = eye[0] - target[0], zy = eye[1] - target[1], zz = eye[2] - target[2];
+    let zl = Math.hypot(zx, zy, zz) || 1;
+    zx /= zl; zy /= zl; zz /= zl;
+    let xx = up[1]*zz - up[2]*zy, xy = up[2]*zx - up[0]*zz, xz = up[0]*zy - up[1]*zx;
+    let xl = Math.hypot(xx, xy, xz) || 1;
+    xx /= xl; xy /= xl; xz /= xl;
+    const yx = zy*xz - zz*xy, yy = zz*xx - zx*xz, yz = zx*xy - zy*xx;
+    return new Float32Array([
+      xx, yx, zx, 0,
+      xy, yy, zy, 0,
+      xz, yz, zz, 0,
+      -(xx*eye[0] + xy*eye[1] + xz*eye[2]),
+      -(yx*eye[0] + yy*eye[1] + yz*eye[2]),
+      -(zx*eye[0] + zy*eye[1] + zz*eye[2]),
+      1
+    ]);
+  }
+
+  function mat4Identity() {
+    return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+  }
+
+  function mat4Mul(a, b) {
+    const out = new Float32Array(16);
+    for (let c = 0; c < 4; c++) {
+      for (let r = 0; r < 4; r++) {
+        out[c*4+r] = a[0*4+r]*b[c*4+0] + a[1*4+r]*b[c*4+1] + a[2*4+r]*b[c*4+2] + a[3*4+r]*b[c*4+3];
+      }
+    }
+    return out;
+  }
+
+  function mat4RotateY(m, ang) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    return mat4Mul(m, new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]));
+  }
+  function mat4RotateX(m, ang) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    return mat4Mul(m, new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]));
+  }
+  function mat4RotateZ(m, ang) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    return mat4Mul(m, new Float32Array([c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1]));
+  }
+  function mat4Translate(m, x, y, z) {
+    return mat4Mul(m, new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]));
+  }
+
+  // =========================================================================
+  // 2. World Layout, Path, River, Bridges, Landmarks & Terrain Math
+  // =========================================================================
+  const WATER_Y = -1.2;
+  const MOON_DIR = norm3(0.54, 0.40, -0.74);
+
+  // Circular riding path spline
+  const PATH_N = 512;
+  const pathPts = [];
+  let totalPathLen = 0;
+  for (let i = 0; i < PATH_N; i++) {
+    const t = (i / PATH_N) * Math.PI * 2;
+    const rad = 60 + 8 * Math.cos(2 * t) + 4 * Math.sin(3 * t);
+    const x = rad * Math.cos(t);
+    const z = rad * Math.sin(t) * 0.86;
+    pathPts.push({ t, x, z, s: 0, tx: 0, tz: 0 });
+  }
+  for (let i = 0; i < PATH_N; i++) {
+    const p0 = pathPts[i];
+    const p1 = pathPts[(i + 1) % PATH_N];
+    const pPrev = pathPts[(i - 1 + PATH_N) % PATH_N];
+    const dx = p1.x - pPrev.x, dz = p1.z - pPrev.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    p0.tx = dx / dl;
+    p0.tz = dz / dl;
+    if (i > 0) {
+      totalPathLen += Math.hypot(p0.x - pathPts[i - 1].x, p0.z - pathPts[i - 1].z);
+      p0.s = totalPathLen;
+    }
+  }
+  totalPathLen += Math.hypot(pathPts[0].x - pathPts[PATH_N - 1].x, pathPts[0].z - pathPts[PATH_N - 1].z);
+
+  function samplePathByS(s) {
+    const sw = ((s % totalPathLen) + totalPathLen) % totalPathLen;
+    let lo = 0, hi = PATH_N - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (pathPts[mid].s <= sw) lo = mid; else hi = mid - 1;
+    }
+    const p0 = pathPts[lo];
+    const p1 = pathPts[(lo + 1) % PATH_N];
+    const segLen = (lo === PATH_N - 1) ? (totalPathLen - p0.s) : (p1.s - p0.s);
+    const f = segLen > 1e-4 ? (sw - p0.s) / segLen : 0;
+    const x = mix(p0.x, p1.x, f);
+    const z = mix(p0.z, p1.z, f);
+    const tx = mix(p0.tx, p1.tx, f);
+    const tz = mix(p0.tz, p1.tz, f);
+    const tl = Math.hypot(tx, tz) || 1;
+    return { x, z, tx: tx / tl, tz: tz / tl, s: sw };
+  }
+
+  function getPathInfo(x, z) {
+    let bestD2 = 1e9, bestIdx = 0;
+    for (let i = 0; i < PATH_N; i += 4) {
+      const p = pathPts[i];
+      const d2 = (x - p.x) ** 2 + (z - p.z) ** 2;
+      if (d2 < bestD2) { bestD2 = d2; bestIdx = i; }
+    }
+    let refineIdx = bestIdx;
+    for (let k = -6; k <= 6; k++) {
+      const idx = (bestIdx + k + PATH_N) % PATH_N;
+      const p = pathPts[idx];
+      const d2 = (x - p.x) ** 2 + (z - p.z) ** 2;
+      if (d2 < bestD2) { bestD2 = d2; refineIdx = idx; }
+    }
+    const p = pathPts[refineIdx];
+    return { dist: Math.sqrt(bestD2), s: p.s, tx: p.tx, tz: p.tz, nx: p.x, nz: p.z };
+  }
+
+  // River centerline Z(x) from waterfall pool (-74, 10) eastward through valley
+  function getRiverCenterZ(x) {
+    return 10.0 + 11.0 * Math.sin(x * 0.032) + 4.0 * Math.cos(x * 0.017);
+  }
+  function getRiverHalfWidth(x) {
+    if (x < -76) return 0.0;
+    const pool = Math.exp(-((x + 68) ** 2) / 90) * 6.5;
+    return 6.8 + 1.8 * Math.sin(x * 0.05) + pool;
+  }
+  function getRiverDistance(x, z) {
+    if (x < -78) {
+      return Math.hypot(x + 74, z - getRiverCenterZ(-74)) - 11.0;
+    }
+    const rz = getRiverCenterZ(x);
+    const hw = getRiverHalfWidth(x);
+    return Math.abs(z - rz) - hw;
+  }
+
+  // Village lane connecting East side of loop to the Village (x=92, z=-14)
+  function getVillageRoadDist(x, z) {
+    // Segment from (62, -6) to (102, -16)
+    const ax = 60, az = -6, bx = 104, bz = -16;
+    const dx = bx - ax, dz = bz - az;
+    const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+    return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+  }
+
+  // Find the two crossings of the circular path with the river for Stone Bridges
+  const bridges = [];
+  {
+    for (let side of [-1, 1]) {
+      let bestIdx = 0, bestScore = 1e9;
+      for (let i = 0; i < PATH_N; i++) {
+        const p = pathPts[i];
+        if (Math.sign(p.x) !== side) continue;
+        const d = Math.abs(p.z - getRiverCenterZ(p.x));
+        if (d < bestScore) { bestScore = d; bestIdx = i; }
+      }
+      const p = pathPts[bestIdx];
+      const hw = getRiverHalfWidth(p.x);
+      bridges.push({
+        x: p.x,
+        z: p.z,
+        tx: p.tx,
+        tz: p.tz,
+        s: p.s,
+        halfLen: hw + 4.8,
+        halfWidth: 3.3,
+        archRise: 2.35
+      });
+    }
+  }
+
+  function getBridgeAt(x, z) {
+    for (const b of bridges) {
+      const dx = x - b.x, dz = z - b.z;
+      const along = dx * b.tx + dz * b.tz;
+      const across = -dx * b.tz + dz * b.tx;
+      if (Math.abs(along) <= b.halfLen && Math.abs(across) <= b.halfWidth) {
+        const u = Math.abs(along) / b.halfLen;
+        const deckY = WATER_Y + 1.35 + b.archRise * Math.pow(Math.cos(u * Math.PI * 0.5), 1.35);
+        return { bridge: b, along, across, deckY };
+      }
+    }
+    return null;
+  }
+
+  // Landmark locations
+  const WINDMILL_POS = { x: 38, z: -42 };
+  const COTTAGE_POS = { x: -24, z: 48 };
+  const CHURCH_POS = { x: 96, z: -18 };
+  const WATERFALL_POS = { x: -83, z: getRiverCenterZ(-74) };
+
+  const VILLAGE_HOUSES = [
+    { x: 84, z: -26, yaw: 0.25, w: 5.2, d: 4.2, h: 3.4 },
+    { x: 86, z: -5,  yaw: -0.18, w: 4.8, d: 3.8, h: 3.1 },
+    { x: 103, z: -28, yaw: 0.45, w: 5.5, d: 4.2, h: 3.6 },
+    { x: 108, z: -6, yaw: -0.35, w: 5.0, d: 4.0, h: 3.2 },
+    { x: 76, z: -18, yaw: 0.10, w: 4.4, d: 3.6, h: 2.9 },
+    { x: 94, z: 4, yaw: -0.5, w: 4.8, d: 3.9, h: 3.0 },
+    { x: 112, z: -19, yaw: 0.2, w: 5.6, d: 4.5, h: 3.7 },
+    { x: 90, z: -36, yaw: -0.1, w: 4.6, d: 3.7, h: 3.0 },
+    { x: 78, z: -34, yaw: 0.6, w: 4.5, d: 3.5, h: 2.8 },
+    { x: 106, z: -38, yaw: -0.4, w: 5.2, d: 4.1, h: 3.3 }
+  ];
+
+  // Raw terrain height (ground + riverbed + cliff + hills)
+  function getRawTerrainHeight(x, z) {
+    const r = Math.hypot(x, z);
+    // Gentle valley rolling base
+    let h = 0.65
+          + 1.6 * Math.sin(x * 0.028 + 0.4) * Math.cos(z * 0.031 - 0.2)
+          + 0.9 * Math.sin(x * 0.065 - z * 0.052)
+          + 1.8 * (fbm2(x * 0.018 + 10.3, z * 0.018 + 4.7, 3) - 0.5);
+
+    // Subtle bowl rising toward outer valley rim
+    if (r > 72) {
+      h += Math.pow((r - 72) * 0.038, 1.45) * 2.2;
+    }
+
+    // Windmill knoll
+    const dWind = Math.hypot(x - WINDMILL_POS.x, z - WINDMILL_POS.z);
+    h += 4.6 * Math.exp(-(dWind * dWind) / 260.0);
+
+    // Cottage gentle rise
+    const dCot = Math.hypot(x - COTTAGE_POS.x, z - COTTAGE_POS.z);
+    h += 1.4 * Math.exp(-(dCot * dCot) / 180.0);
+
+    // Village plateau around y ~ 1.6
+    const dVil = Math.hypot(x - 95, z + 15);
+    if (dVil < 35) {
+      const f = smoothstep(35, 14, dVil);
+      h = mix(h, 1.8, f * 0.85);
+    }
+
+    // Flatten slightly along circular path (except over water)
+    const pInfo = getPathInfo(x, z);
+    if (pInfo.dist < 8.5) {
+      const pf = smoothstep(8.5, 2.8, pInfo.dist);
+      h = mix(h, Math.max(h * 0.55 + 0.35, 0.3), pf * 0.72);
+    }
+
+    // Waterfall rocky cliff wall on the West (x < -72, centered near z = WATERFALL_POS.z)
+    const wfDz = Math.abs(z - WATERFALL_POS.z);
+    if (x < -72) {
+      const cliffStep = smoothstep(-74, -84, x);
+      const cliffWidth = smoothstep(38, 12, wfDz);
+      const crag = 3.2 * (fbm2(x * 0.12, z * 0.12, 3) - 0.3);
+      h += cliffStep * cliffWidth * (25.5 + crag);
+    }
+
+    // River channel carving
+    const rDist = getRiverDistance(x, z);
+    if (rDist < 7.0) {
+      const carve = smoothstep(7.0, -2.5, rDist);
+      h = mix(h, WATER_Y - 2.4, carve);
+    }
+
+    return h;
+  }
+
+  function getTerrainNormal(x, z) {
+    const e = 0.6;
+    const hL = getRawTerrainHeight(x - e, z);
+    const hR = getRawTerrainHeight(x + e, z);
+    const hD = getRawTerrainHeight(x, z - e);
+    const hU = getRawTerrainHeight(x, z + e);
+    return norm3(hL - hR, 2 * e, hD - hU);
+  }
+
+  function getRideableHeight(x, z) {
+    let h = getRawTerrainHeight(x, z);
+    const b = getBridgeAt(x, z);
+    if (b && b.deckY > h) h = b.deckY;
+    return h;
+  }
+
+  // Obstacles along the circular path (fences, stone walls, fallen logs)
+  const obstacles = [];
+  {
+    const types = ['fence', 'stoneWall', 'fallenLog', 'fence', 'stoneWall', 'fallenLog'];
+    // Place 6 obstacles evenly distributed, skipping bridge & river zones
+    let placed = 0;
+    for (let k = 0; k < 28 && placed < 6; k++) {
+      const sCandidate = ((k + 0.5) / 28) * totalPathLen;
+      const pt = samplePathByS(sCandidate);
+      let nearBridge = false;
+      for (const b of bridges) {
+        if (Math.hypot(pt.x - b.x, pt.z - b.z) < 20) nearBridge = true;
+      }
+      if (nearBridge || getRiverDistance(pt.x, pt.z) < 9) continue;
+      if (obstacles.some(o => Math.hypot(o.x - pt.x, o.z - pt.z) < 34)) continue;
+
+      const type = types[placed];
+      const y = getRideableHeight(pt.x, pt.z);
+      const yaw = Math.atan2(pt.tx, pt.tz);
+      obstacles.push({
+        id: placed,
+        type,
+        x: pt.x, y, z: pt.z,
+        s: pt.s,
+        tx: pt.tx, tz: pt.tz,
+        yaw,
+        halfWidth: 3.1,
+        halfDepth: type === 'fallenLog' ? 0.55 : 0.42,
+        height: type === 'fence' ? 1.15 : (type === 'stoneWall' ? 1.0 : 0.85)
+      });
+      placed++;
+    }
+  }
+
+  // Warm point lights for shader (8 max)
+  const warmLights = [
+    [COTTAGE_POS.x + 2.8, getRawTerrainHeight(COTTAGE_POS.x, COTTAGE_POS.z) + 2.4, COTTAGE_POS.z - 2.0, 22.0],
+    [WINDMILL_POS.x, getRawTerrainHeight(WINDMILL_POS.x, WINDMILL_POS.z) + 4.5, WINDMILL_POS.z + 3.5, 20.0],
+    [CHURCH_POS.x - 2.0, getRawTerrainHeight(CHURCH_POS.x, CHURCH_POS.z) + 7.5, CHURCH_POS.z, 32.0],
+    [85, 4.5, -16, 24.0],
+    [104, 4.5, -16, 24.0],
+    [92, 4.2, -31, 20.0],
+    [bridges[0].x, bridges[0].y || 2.5, bridges[0].z, 16.0],
+    [bridges[1].x, bridges[1].y || 2.5, bridges[1].z, 16.0]
+  ];
+  // Fill bridge y properly
+  warmLights[6][1] = getRideableHeight(bridges[0].x, bridges[0].z) + 2.2;
+  warmLights[7][1] = getRideableHeight(bridges[1].x, bridges[1].z) + 2.2;
+
+  // =========================================================================
+  // 3. Mountain Layer Height Functions (3 Layers + Solid Silhouettes)
+  // =========================================================================
+  function getMountainRadius(layer, ang) {
+    if (layer === 0) return 155 + 14 * Math.sin(ang * 3 + 0.5) + 8 * Math.cos(ang * 5);
+    if (layer === 1) return 265 + 22 * Math.sin(ang * 2 - 0.8) + 12 * Math.cos(ang * 6);
+    return 470 + 35 * Math.sin(ang * 3 + 1.2) + 18 * Math.cos(ang * 5);
+  }
+  function getMountainHeight(layer, ang) {
+    // Iconic wavy Alpilles mountains higher in North/East/West, slightly lower toward South-East horizon
+    const wave = 0.55 + 0.45 * Math.sin(ang * 2.0 - 0.6);
+    if (layer === 0) {
+      return 19 + 11 * Math.sin(ang * 4.0 + 0.3) + 6 * Math.cos(ang * 9.0 - 1.1) + 6 * wave;
+    }
+    if (layer === 1) {
+      return 42 + 18 * Math.sin(ang * 3.0 + 1.4) + 11 * Math.sin(ang * 7.0 + 0.2) + 10 * wave;
+    }
+    // Layer 3: tall craggy snowy alpine peaks
+    const ridge1 = 1.0 - Math.abs(Math.sin(ang * 6.0 + 0.8));
+    const ridge2 = 1.0 - Math.abs(Math.cos(ang * 13.0 - 0.4));
+    const ridge3 = Math.abs(Math.sin(ang * 23.0 + 1.7));
+    return 72 + 54 * Math.pow(ridge1, 1.15) + 26 * Math.pow(ridge2, 1.3) + 12 * ridge3 + 14 * wave;
+  }
+
+  // =========================================================================
+  // 4. WebGL2 Shaders (Instanced Impasto Brushstrokes + Solid Silhouettes)
+  // =========================================================================
+  function compileShader(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      const log = gl.getShaderInfoLog(sh);
+      console.error('Shader error:', log, src);
+      throw new Error(log);
+    }
+    return sh;
+  }
+  function createProgram(vsSrc, fsSrc) {
+    const p = gl.createProgram();
+    gl.attachShader(p, compileShader(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(p, compileShader(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(p));
+    }
+    return p;
+  }
+
+  // Solid Silhouette & Sky Dome Backdrop Program
+  const solidVS = `#version 300 es
+  precision highp float;
+  layout(location = 0) in vec3 aPos;
+  layout(location = 1) in vec3 aColor;
+  uniform mat4 uView;
+  uniform mat4 uProj;
+  uniform vec3 uCamPos;
+  out vec3 vColor;
+  out float vDist;
+  void main() {
+    vec4 wp = vec4(aPos, 1.0);
+    vDist = length(uCamPos - aPos);
+    vColor = aColor;
+    gl_Position = uProj * uView * wp;
+  }`;
+
+  const solidFS = `#version 300 es
+  precision highp float;
+  in vec3 vColor;
+  in float vDist;
+  uniform int uIsSky;
+  out vec4 fragColor;
+  void main() {
+    vec3 col = vColor;
+    if (uIsSky == 0) {
+      float fog = 1.0 - exp(-max(vDist - 130.0, 0.0) * 0.0022);
+      col = mix(col, vec3(0.055, 0.115, 0.27), clamp(fog, 0.0, 0.72));
+    }
+    fragColor = vec4(col, 1.0);
+  }`;
+
+  // Main Impasto Brushstroke Program
+  // Handles: world static, sky swirls, mountains, river reflections, waterfall, windmill sails, toroidal real-time grass, and horse/knight!
+  const strokeVS = `#version 300 es
+  precision highp float;
+
+  layout(location = 0) in vec2 aCorner;   // [-0.5, 0.5]^2
+  layout(location = 1) in vec4 aPosLen;   // xyz = world pos, w = length
+  layout(location = 2) in vec4 aNormWid;  // xyz = normal, w = width
+  layout(location = 3) in vec4 aTanMeta;  // xyz = tangent, w = matType + seed (fract)
+  layout(location = 4) in vec4 aColLit;   // rgb = lit pigment, a = emissive/self-lit
+  layout(location = 5) in vec4 aColShd;   // rgb = shadow pigment, a = relief strength
+
+  uniform mat4 uView;
+  uniform mat4 uProj;
+  uniform mat4 uModel;
+  uniform int  uUseModel;
+  uniform vec3 uCamPos;
+  uniform vec2 uViewport;
+  uniform float uTime;
+  uniform float uWaterY;
+
+  // Real-time toroidal grass mode
+  uniform int uIsGrass;
+  uniform float uGrassSpan;
+  uniform sampler2D uTerrainTex; // RGBA32F: r=height, g=grassMask, b=pathFactor, a=waterFactor
+  uniform float uTerrainWorldSpan; // 320.0 (from -160 to +160)
+
+  out vec2 vUv;
+  out vec3 vWorldPos;
+  out vec3 vNormal;
+  out vec3 vTangent;
+  out vec3 vBitangent;
+  out vec3 vColLit;
+  out vec3 vColShd;
+  out float vEmissive;
+  out float vRelief;
+  out float vSeed;
+  out float vAlpha;
+  flat out int vMatType;
+
+  float hash11(float p) {
+    p = fract(p * 0.1031);
+    p *= p + 33.33;
+    p *= p + p;
+    return fract(p);
+  }
+
+  // Analytical Van Gogh sky swirl field on unit sphere direction
+  vec3 skyFlowVel(vec3 d) {
+    vec3 v = cross(vec3(0.0, 1.0, 0.0), d) * 0.34;
+    float az = atan(d.z, d.x);
+    v.y += cos(az * 2.5 + d.y * 4.0) * 0.16;
+
+    // Vortex 1: Giant central-west spiral
+    vec3 c1 = normalize(vec3(-0.26, 0.48, -0.84));
+    float a1 = acos(clamp(dot(d, c1), -1.0, 1.0));
+    vec3 t1 = cross(c1, d);
+    float tl1 = length(t1);
+    if (tl1 > 1e-4) {
+      t1 /= tl1;
+      v += t1 * (1.75 * exp(-(a1 * a1) / 0.16));
+    }
+
+    // Vortex 2: Secondary upper-east eddy
+    vec3 c2 = normalize(vec3(0.16, 0.62, -0.77));
+    float a2 = acos(clamp(dot(d, c2), -1.0, 1.0));
+    vec3 t2 = cross(c2, d);
+    float tl2 = length(t2);
+    if (tl2 > 1e-4) {
+      t2 /= tl2;
+      v -= t2 * (1.45 * exp(-(a2 * a2) / 0.11));
+    }
+
+    // Vortex 3: Horizon eddy
+    vec3 c3 = normalize(vec3(-0.66, 0.27, -0.70));
+    float a3 = acos(clamp(dot(d, c3), -1.0, 1.0));
+    vec3 t3 = cross(c3, d);
+    float tl3 = length(t3);
+    if (tl3 > 1e-4) {
+      t3 /= tl3;
+      v += t3 * (1.25 * exp(-(a3 * a3) / 0.08));
+    }
+
+    // Remove radial component so velocity stays tangent to sky dome
+    v -= d * dot(v, d);
+    return v;
+  }
+
+  // Manual bilinear fetch on RGBA32F procedural terrain texture
+  vec4 sampleTerrain(vec2 wxz) {
+    vec2 uv = (wxz / uTerrainWorldSpan) + 0.5;
+    if (uv.x <= 0.002 || uv.x >= 0.998 || uv.y <= 0.002 || uv.y >= 0.998) {
+      return vec4(0.0, 0.0, 0.0, 0.0);
+    }
+    ivec2 sz = textureSize(uTerrainTex, 0);
+    vec2 fpos = uv * vec2(sz - 1);
+    ivec2 i0 = ivec2(floor(fpos));
+    ivec2 i1 = min(i0 + ivec2(1), sz - ivec2(1));
+    vec2 f = fract(fpos);
+    vec4 t00 = texelFetch(uTerrainTex, i0, 0);
+    vec4 t10 = texelFetch(uTerrainTex, ivec2(i1.x, i0.y), 0);
+    vec4 t01 = texelFetch(uTerrainTex, ivec2(i0.x, i1.y), 0);
+    vec4 t11 = texelFetch(uTerrainTex, i1, 0);
+    return mix(mix(t00, t10, f.x), mix(t01, t11, f.x), f.y);
+  }
+
+  void main() {
+    float meta = aTanMeta.w;
+    int matType = int(floor(meta + 0.001));
+    float seed = fract(meta);
+    if (seed < 0.0001) seed = hash11(float(gl_InstanceID) * 0.137);
+
+    vec3 wp = aPosLen.xyz;
+    vec3 N = normalize(aNormWid.xyz);
+    vec3 T = normalize(aTanMeta.xyz);
+    float L0 = aPosLen.w;
+    float W0 = aNormWid.w;
+    float cycleAlpha = 1.0;
+    float cycleScale = 1.0;
+
+    if (uUseModel == 1) {
+      wp = (uModel * vec4(wp, 1.0)).xyz;
+      mat3 nm = mat3(uModel);
+      N = normalize(nm * N);
+      T = normalize(nm * T);
+    }
+
+    // Real-time toroidal grass around camera
+    if (uIsGrass == 1) {
+      float halfSpan = uGrassSpan * 0.5;
+      vec2 rel = wp.xz - uCamPos.xz;
+      vec2 wrapped = mod(rel + halfSpan, uGrassSpan) - halfSpan;
+      vec2 wxz = uCamPos.xz + wrapped;
+
+      vec4 terr = sampleTerrain(wxz);
+      float mask = terr.g;
+      if (mask < 0.15) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+      }
+      float grassDist = length(wrapped);
+      float edgeFade = 1.0 - smoothstep(halfSpan * 0.68, halfSpan * 0.97, grassDist);
+      if (edgeFade <= 0.01) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+      }
+      cycleScale *= edgeFade * mask;
+      cycleAlpha *= edgeFade;
+
+      // Ground grass blade + gentle night wind sway
+      float bladeH = L0;
+      float sway = sin(uTime * 1.9 + wxz.x * 0.35 + wxz.y * 0.27 + seed * 6.28) * 0.16;
+      wp = vec3(wxz.x + sway * 0.5, terr.r + bladeH * 0.42, wxz.y + sway * 0.3);
+      T = normalize(vec3(sway + (seed - 0.5) * 0.35, 1.0, (hash11(seed * 41.0) - 0.5) * 0.35));
+      // Face somewhat toward camera around vertical blade axis so thin blades stay visible
+      vec3 toCamH = normalize(vec3(uCamPos.x - wp.x, 0.15, uCamPos.z - wp.z));
+      N = normalize(mix(N, toCamH, 0.72));
+    }
+
+    // Sky swirling flow animation along air currents
+    if (matType == 2) {
+      float R = length(wp);
+      vec3 dir = wp / max(R, 1.0);
+      float phase = fract(seed * 7.13 + uTime * 0.042);
+      float dt = (phase - 0.5) * 0.20;
+      // 2-step RK2 advection along curved sky vortices
+      vec3 v1 = skyFlowVel(dir);
+      vec3 midDir = normalize(dir + v1 * (dt * 0.5));
+      vec3 v2 = skyFlowVel(midDir);
+      vec3 advDir = normalize(dir + v2 * dt);
+
+      wp = advDir * R;
+      N = -advDir;
+      vec3 flow = skyFlowVel(advDir);
+      float fl = length(flow);
+      if (fl > 1e-4) T = flow / fl;
+
+      float cFade = smoothstep(0.0, 0.18, phase) * (1.0 - smoothstep(0.82, 1.0, phase));
+      cycleScale *= cFade;
+      cycleAlpha *= cFade;
+    }
+
+    // Wheat / foliage wind sway
+    if (matType == 3) {
+      float wind = sin(uTime * 2.1 + wp.x * 0.22 + wp.z * 0.18 + seed * 6.28) * 0.16;
+      wp.x += wind;
+      wp.z += wind * 0.5;
+      T = normalize(T + vec3(wind * 0.5, 0.0, wind * 0.25));
+    }
+
+    // Waterfall cascading flow & pool mist
+    if (matType == 4) {
+      float isMist = step(0.84, seed);
+      if (isMist > 0.5) {
+        // Swirling pool mist
+        float p = fract(seed * 11.3 + uTime * 0.22);
+        float ang = p * 6.28318;
+        wp.x += cos(ang) * 1.6;
+        wp.z += sin(ang) * 1.6;
+        wp.y += sin(p * 3.14159) * 1.2;
+        float cf = smoothstep(0.0, 0.22, p) * (1.0 - smoothstep(0.72, 1.0, p));
+        cycleScale *= cf;
+        cycleAlpha *= cf * 0.8;
+      } else {
+        // Vertical cascade down the cliff face (y from ~24.5 down to WATER_Y)
+        float p = fract(seed * 9.7 + uTime * 0.42);
+        float topY = 24.5;
+        float botY = uWaterY - 0.2;
+        wp.y = mix(topY, botY, p);
+        wp.x += p * 4.8 + sin(p * 10.0 + seed * 12.0) * 0.35;
+        float cf = smoothstep(0.0, 0.12, p) * (1.0 - smoothstep(0.88, 1.0, p));
+        cycleScale *= cf;
+        cycleAlpha *= cf;
+      }
+    }
+
+    // River water gentle ripple
+    if (matType == 5) {
+      float rip = sin(uTime * 2.2 + wp.x * 0.45 + wp.z * 0.6 + seed * 6.28);
+      wp.y += rip * 0.045;
+      N = normalize(vec3(rip * 0.06, 1.0, cos(uTime * 1.8 + wp.z * 0.5) * 0.06));
+    }
+
+    // Moon halo & radiant star gentle shimmer
+    if (matType == 6) {
+      float pulse = 0.93 + 0.07 * sin(uTime * 1.4 + seed * 25.0);
+      cycleScale *= pulse;
+    }
+
+    vec3 toCam = uCamPos - wp;
+    float dist = length(toCam);
+    vec3 viewDir = toCam / max(dist, 0.001);
+
+    // Sky & celestial (matType 2, 6) stay crisp at R=620..650; matType 8 (windows/lantern) uses world LOD & small depth spread
+    float rLod = hash11(seed * 97.13 + float(gl_InstanceID % 17) * 0.013);
+    float shrinkFade = 1.0;
+    if (matType == 0 || matType == 3 || matType == 5) {
+      float maxD = mix(62.0, 240.0, pow(rLod, 1.65));
+      float span = maxD * 0.30;
+      shrinkFade = 1.0 - smoothstep(maxD - span, maxD, dist);
+    } else if (matType == 1 || matType == 8) {
+      float maxD = mix(220.0, 620.0, pow(rLod, 1.25));
+      shrinkFade = 1.0 - smoothstep(maxD * 0.72, maxD, dist);
+    }
+
+    float totalScale = shrinkFade * cycleScale;
+    if (totalScale <= 0.004) {
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      return;
+    }
+
+    // Distant strokes become larger & fewer
+    float distGrow = (matType == 2 || matType == 6) ? 1.0 : (1.0 + dist * 0.015);
+    float L = L0 * distGrow;
+    float W = W0 * distGrow;
+
+    // Screen-space size upper & lower bounds
+    vec4 viewPos = uView * vec4(wp, 1.0);
+    float viewZ = max(-viewPos.z, 0.25);
+    float pxPerUnit = (uViewport.y * 0.5 * uProj[1][1]) / viewZ;
+
+    float minPxL = (matType == 2 || matType == 6) ? 5.5 : 3.6;
+    float maxPxL = (matType == 2 || matType == 6) ? 110.0 : (matType == 7 ? 75.0 : 68.0);
+    float minPxW = (matType == 0) ? 2.4 : 1.6;
+    float maxPxW = (matType == 2 || matType == 6) ? 34.0 : 28.0;
+
+    float clampedL = clamp(L * pxPerUnit, minPxL, maxPxL) / max(pxPerUnit, 1e-4);
+    float clampedW = clamp(W * pxPerUnit, minPxW, maxPxW) / max(pxPerUnit, 1e-4);
+
+    // Apply shrinkFade AFTER screen-size clamping so fading strokes shrink smoothly to 0
+    L = clampedL * totalScale;
+    W = clampedW * totalScale;
+
+    // Anti-flicker depth spacing increasing with distance
+    float layerRand = hash11(seed * 313.7 + 0.37);
+    float layerSpread = (matType == 2 || matType == 6) ? (layerRand * 4.5)
+                      : (matType == 7 ? (0.4 + layerRand * dist * 0.014)
+                      : (matType == 8 ? (layerRand * 0.04)
+                      : ((layerRand - 0.15) * (0.014 + max(dist - 12.0, 0.0) * 0.011))));
+    vec3 offsetDir = normalize(mix(N, viewDir, 0.5));
+    vec3 centerPos = wp + offsetDir * layerSpread;
+
+    // Orthonormal stroke basis fixed in 3D world orientation
+    vec3 T_ortho = T - N * dot(T, N);
+    float tl = length(T_ortho);
+    if (tl < 1e-4) {
+      vec3 fallback = abs(N.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+      T_ortho = normalize(cross(fallback, N));
+    } else {
+      T_ortho /= tl;
+    }
+    vec3 B = normalize(cross(N, T_ortho));
+
+    vec3 vertPos = centerPos + T_ortho * (aCorner.x * L) + B * (aCorner.y * W);
+
+    vUv = aCorner * 2.0; // [-1, 1]
+    vWorldPos = vertPos;
+    vNormal = N;
+    vTangent = T_ortho;
+    vBitangent = B;
+    vColLit = aColLit.rgb;
+    vColShd = aColShd.rgb;
+    vEmissive = aColLit.a;
+    vRelief = aColShd.a;
+    vSeed = seed;
+    vAlpha = clamp(cycleAlpha * shrinkFade, 0.0, 1.0);
+    vMatType = matType;
+
+    gl_Position = uProj * uView * vec4(vertPos, 1.0);
+  }`;
+
+  const strokeFS = `#version 300 es
+  precision highp float;
+
+  in vec2 vUv;
+  in vec3 vWorldPos;
+  in vec3 vNormal;
+  in vec3 vTangent;
+  in vec3 vBitangent;
+  in vec3 vColLit;
+  in vec3 vColShd;
+  in float vEmissive;
+  in float vRelief;
+  in float vSeed;
+  in float vAlpha;
+  flat in int vMatType;
+
+  uniform vec3 uCamPos;
+  uniform vec3 uMoonDir;
+  uniform vec3 uLanternPos;
+  uniform vec4 uWarmLights[8]; // xyz = pos, w = radius
+  uniform sampler2D uReflTex;
+  uniform mat4 uReflVP;
+  uniform int uHasRefl;
+  uniform float uTime;
+
+  out vec4 fragColor;
+
+  float hash11(float p) {
+    p = fract(p * 0.1031);
+    p *= p + 33.33;
+    p *= p + p;
+    return fract(p);
+  }
+
+  void main() {
+    if (vAlpha <= 0.02) discard;
+
+    // Fixed number of bristles per brushstroke!
+    const float NUM_BRISTLES = 8.0;
+    float u = vUv.x;
+    float v = vUv.y;
+
+    float bristleCoord = (v * 0.5 + 0.5) * NUM_BRISTLES;
+    float bId = floor(clamp(bristleCoord, 0.0, NUM_BRISTLES - 1.0));
+    float bFrac = fract(bristleCoord);
+    float bHash = hash11(vSeed * 53.17 + bId * 17.31);
+    float bHash2 = hash11(vSeed * 91.73 + bId * 31.19);
+
+    // Tapered organic oil-brush silhouette & bristle ends
+    float endReach = 0.78 + 0.22 * bHash;
+    float widthEnv = 1.0 - pow(abs(v), 2.5);
+    float uNorm = abs(u) / (endReach * mix(0.75, 1.0, widthEnv));
+    if (uNorm > 1.0 || abs(v) > 0.96) discard;
+
+    float tipBreak = smoothstep(0.72, 1.0, uNorm);
+    if (tipBreak > 0.22 && bHash2 < tipBreak * 0.48) discard;
+
+    // Impasto bristle height & analytical normal perturbation
+    // fwidth smoothly prevents moire shimmer on sub-pixel distant bristles while keeping fixed count
+    float fw = fwidth(bristleCoord);
+    float bFilter = clamp(1.0 - fw * 0.42, 0.12, 1.0);
+    float ridge = sin(bFrac * 3.14159265);
+    float dRidgeDv = cos(bFrac * 3.14159265) * 3.14159265 * 0.55;
+    float dEdgeDu = -sign(u) * smoothstep(0.50, 0.96, uNorm) * 1.25;
+
+    float reliefAmp = mix(0.12, 0.34, vRelief) * bFilter;
+    vec3 N_imp = normalize(vNormal + (dRidgeDv * reliefAmp) * vBitangent + (dEdgeDu * 0.18 * vRelief) * vTangent);
+
+    // View vector
+    vec3 V = normalize(uCamPos - vWorldPos);
+    if (dot(N_imp, V) < 0.0 && vMatType != 2 && vMatType != 6) {
+      // Keep double-sided foliage / strokes softly lit without harsh inversion
+      N_imp = normalize(mix(N_imp, -N_imp, 0.55));
+    }
+
+    // 1. Moonlight illumination & Lit/Shadow pigment selection
+    float ndlMoon = dot(N_imp, uMoonDir);
+    float strokeBias = (vSeed - 0.5) * 0.22;
+    float litFactor = smoothstep(-0.28 + strokeBias, 0.58 + strokeBias, ndlMoon);
+
+    vec3 baseCol = mix(vColShd, vColLit, litFactor);
+
+    // Subtle per-stroke random pigment color variation (hue/value jitter)
+    float cVar1 = hash11(vSeed * 19.3) - 0.5;
+    float cVar2 = hash11(vSeed * 71.9) - 0.5;
+    float cVar3 = hash11(vSeed * 113.7) - 0.5;
+    baseCol *= vec3(1.0 + cVar1 * 0.13, 1.0 + cVar2 * 0.11, 1.0 + cVar3 * 0.13);
+    // Subtle bristle-to-bristle paint streak variation
+    baseCol *= (0.94 + 0.12 * ridge * (0.6 + 0.4 * bHash));
+
+    // River reflection sampling per brushstroke!
+    if (vMatType == 5 && uHasRefl == 1) {
+      vec4 rp = uReflVP * vec4(vWorldPos, 1.0);
+      if (rp.w > 0.1) {
+        vec2 ruv = rp.xy / rp.w * 0.5 + 0.5;
+        // Painterly horizontal ripple distortion matching oil ripples
+        ruv.x += sin(vWorldPos.z * 0.8 + uTime * 2.6 + vSeed * 6.28) * 0.018;
+        ruv.y += cos(vWorldPos.x * 0.6 + uTime * 2.1) * 0.012;
+        if (ruv.x > 0.02 && ruv.x < 0.98 && ruv.y > 0.02 && ruv.y < 0.98) {
+          vec3 reflCol = texture(uReflTex, ruv).rgb;
+          float fres = mix(0.45, 0.86, pow(1.0 - clamp(abs(dot(V, vec3(0.0, 1.0, 0.0))), 0.0, 1.0), 1.4));
+          baseCol = mix(baseCol, reflCol * 1.15, fres);
+        }
+      }
+    }
+
+    // 2. Cool blue-shifted desaturated moonlight vs Warm lamp zones
+    vec3 finalCol = baseCol;
+    if (vMatType != 2 && vMatType != 6) {
+      // Accumulate warm light from rider's lantern + village/cottage lamps
+      float warmAmt = 0.0;
+      vec3 warmSpec = vec3(0.0);
+
+      // Rider's swaying lantern
+      vec3 toLantern = uLanternPos - vWorldPos;
+      float dLantern = length(toLantern);
+      if (dLantern < 21.0) {
+        vec3 L = toLantern / max(dLantern, 0.05);
+        float atten = smoothstep(21.0, 1.2, dLantern);
+        atten = atten * atten;
+        float nDotL = clamp(dot(N_imp, L) * 0.6 + 0.4, 0.0, 1.0);
+        warmAmt += atten * (0.45 + 0.75 * nDotL);
+        vec3 H = normalize(L + V);
+        warmSpec += vec3(1.0, 0.78, 0.36) * pow(max(dot(N_imp, H), 0.0), 18.0) * atten * 0.42;
+      }
+
+      // Village / cottage / bridge warm lights
+      for (int i = 0; i < 8; i++) {
+        vec4 wl = uWarmLights[i];
+        vec3 toW = wl.xyz - vWorldPos;
+        float dW = length(toW);
+        if (dW < wl.w) {
+          float att = smoothstep(wl.w, 1.5, dW);
+          att = att * att;
+          vec3 L = toW / max(dW, 0.05);
+          float nDotL = clamp(dot(N_imp, L) * 0.55 + 0.45, 0.0, 1.0);
+          warmAmt += att * (0.35 + 0.65 * nDotL);
+        }
+      }
+
+      warmAmt = clamp(warmAmt, 0.0, 1.25);
+
+      // Moonlit zone: cool cobalt-blue tint & lowered saturation
+      float luma = dot(baseCol, vec3(0.299, 0.587, 0.114));
+      vec3 moonlitCol = mix(vec3(luma), baseCol, 0.62) * vec3(0.68, 0.84, 1.20);
+      // Moonlight impasto sheen on raised paint ridges
+      vec3 H_moon = normalize(uMoonDir + V);
+      float moonSpec = pow(max(dot(N_imp, H_moon), 0.0), 22.0) * (0.14 + 0.16 * vRelief);
+      moonlitCol += vec3(0.55, 0.72, 1.0) * moonSpec;
+
+      // Warm-lit zone: vibrant, warm golden-amber saturated paint!
+      vec3 warmLitCol = baseCol * vec3(1.24, 1.02, 0.72) + vec3(0.20, 0.12, 0.02) * warmAmt + warmSpec;
+
+      finalCol = mix(moonlitCol, warmLitCol, clamp(warmAmt, 0.0, 1.0));
+
+      // Self-emissive (lit windows, lantern flame)
+      if (vEmissive > 0.05) {
+        finalCol = mix(finalCol, vColLit * 1.35, vEmissive);
+      }
+
+      // Snow peaks keep crisp moonlit icy brightness
+      if (vMatType == 7) {
+        finalCol = mix(finalCol, vColLit * (0.88 + 0.18 * litFactor), 0.65);
+      }
+
+      // Atmospheric night blue haze on far world/mountains (not sky)
+      float camDist = length(uCamPos - vWorldPos);
+      float fogStart = (vMatType == 7) ? 260.0 : 125.0;
+      float fogRate  = (vMatType == 7) ? 0.0014 : 0.0024;
+      float fog = 1.0 - exp(-max(camDist - fogStart, 0.0) * fogRate);
+      finalCol = mix(finalCol, vec3(0.07, 0.15, 0.34), clamp(fog, 0.0, 0.62));
+    } else {
+      // Sky swirls, Moon, and Stars: luminous Starry Night impasto sheen
+      float skySpec = pow(max(dot(N_imp, normalize(uMoonDir + V)), 0.0), 14.0) * 0.10;
+      finalCol = baseCol * (0.94 + 0.14 * ridge) + vec3(0.18, 0.25, 0.35) * skySpec;
+      if (vEmissive > 0.05) {
+        finalCol = mix(finalCol, vColLit * 1.25, vEmissive * 0.75);
+      }
+    }
+
+    fragColor = vec4(clamp(finalCol, 0.0, 1.35), vAlpha);
+  }`;
+
+  const solidProg = createProgram(solidVS, solidFS);
+  const strokeProg = createProgram(strokeVS, strokeFS);
+
+  // =========================================================================
+  // 5. Procedural Terrain Height & Mask DataTexture (for real-time GPU grass)
+  // =========================================================================
+  const TERRAIN_TEX_RES = 512;
+  const TERRAIN_WORLD_SPAN = 320.0;
+  const terrainTexData = new Float32Array(TERRAIN_TEX_RES * TERRAIN_TEX_RES * 4);
+  for (let iy = 0; iy < TERRAIN_TEX_RES; iy++) {
+    const z = ((iy / (TERRAIN_TEX_RES - 1)) - 0.5) * TERRAIN_WORLD_SPAN;
+    for (let ix = 0; ix < TERRAIN_TEX_RES; ix++) {
+      const x = ((ix / (TERRAIN_TEX_RES - 1)) - 0.5) * TERRAIN_WORLD_SPAN;
+      const h = getRawTerrainHeight(x, z);
+      const rDist = getRiverDistance(x, z);
+      const pInfo = getPathInfo(x, z);
+      const vDist = getVillageRoadDist(x, z);
+      const onBridge = getBridgeAt(x, z) !== null;
+
+      // Suppress grass on roads, river, waterfall cliff, cottage/church footprints
+      let grassMask = 1.0;
+      if (rDist < 1.2 || onBridge) grassMask = 0.0;
+      else if (pInfo.dist < 3.0) grassMask = smoothstep(2.0, 3.6, pInfo.dist);
+      else if (vDist < 2.6) grassMask = smoothstep(1.6, 3.0, vDist);
+
+      if (x < -75 && Math.abs(z - WATERFALL_POS.z) < 20) grassMask = 0.0;
+      if (Math.hypot(x - COTTAGE_POS.x, z - COTTAGE_POS.z) < 4.8) grassMask = 0.0;
+      if (Math.hypot(x - WINDMILL_POS.x, z - WINDMILL_POS.z) < 4.6) grassMask = 0.0;
+      if (Math.hypot(x - CHURCH_POS.x, z - CHURCH_POS.z) < 7.0) grassMask = 0.0;
+      for (const vh of VILLAGE_HOUSES) {
+        if (Math.hypot(x - vh.x, z - vh.z) < 4.2) grassMask = 0.0;
+      }
+
+      const idx = (iy * TERRAIN_TEX_RES + ix) * 4;
+      terrainTexData[idx]     = h;
+      terrainTexData[idx + 1] = grassMask;
+      terrainTexData[idx + 2] = pInfo.dist < 3.2 ? 1.0 : 0.0;
+      terrainTexData[idx + 3] = rDist < 0.0 ? 1.0 : 0.0;
+    }
+  }
+
+  const terrainTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, terrainTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, TERRAIN_TEX_RES, TERRAIN_TEX_RES, 0, gl.RGBA, gl.FLOAT, terrainTexData);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  // =========================================================================
+  // 6. Brushstroke Buffer Builder Helper
+  // =========================================================================
+  const quadVerts = new Float32Array([
+    -0.5, -0.5,  0.5, -0.5,  0.5,  0.5,
+    -0.5, -0.5,  0.5,  0.5, -0.5,  0.5
+  ]);
+  const quadVBO = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
+  gl.bufferData(gl.ARRAY_BUFFER, quadVerts, gl.STATIC_DRAW);
+
+  class StrokeBatch {
+    constructor(capacity) {
+      this.cap = capacity;
+      this.count = 0;
+      this.posLen = new Float32Array(capacity * 4);
+      this.normWid = new Float32Array(capacity * 4);
+      this.tanMeta = new Float32Array(capacity * 4);
+      this.colLit = new Uint8Array(capacity * 4);
+      this.colShd = new Uint8Array(capacity * 4);
+    }
+
+    push(px, py, pz, len, nx, ny, nz, wid, tx, ty, tz, matType, colL, colS, emissive = 0, relief = 0.65) {
+      if (this.count >= this.cap) return;
+      const i = this.count++;
+      const i4 = i * 4;
+      this.posLen[i4] = px; this.posLen[i4+1] = py; this.posLen[i4+2] = pz; this.posLen[i4+3] = len;
+
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      this.normWid[i4] = nx/nl; this.normWid[i4+1] = ny/nl; this.normWid[i4+2] = nz/nl; this.normWid[i4+3] = wid;
+
+      const tl = Math.hypot(tx, ty, tz) || 1;
+      // Avoid 0.0 or 1.0 boundary for fract(meta)
+      const seed = 0.001 + rand() * 0.997;
+      this.tanMeta[i4] = tx/tl; this.tanMeta[i4+1] = ty/tl; this.tanMeta[i4+2] = tz/tl;
+      this.tanMeta[i4+3] = matType + seed;
+
+      this.colLit[i4]   = clamp((colL[0] * 255) | 0, 0, 255);
+      this.colLit[i4+1] = clamp((colL[1] * 255) | 0, 0, 255);
+      this.colLit[i4+2] = clamp((colL[2] * 255) | 0, 0, 255);
+      this.colLit[i4+3] = clamp((emissive * 255) | 0, 0, 255);
+
+      this.colShd[i4]   = clamp((colS[0] * 255) | 0, 0, 255);
+      this.colShd[i4+1] = clamp((colS[1] * 255) | 0, 0, 255);
+      this.colShd[i4+2] = clamp((colS[2] * 255) | 0, 0, 255);
+      this.colShd[i4+3] = clamp((relief * 255) | 0, 0, 255);
+    }
+
+    upload(usage = gl.STATIC_DRAW) {
+      const n = this.count;
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(0, 0);
+
+      const mkBuf = (loc, arr, type, norm, strideBytes) => {
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, arr.subarray(0, n * 4), usage);
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, 4, type, norm, strideBytes, 0);
+        gl.vertexAttribDivisor(loc, 1);
+        return buf;
+      };
+
+      const bufs = [
+        mkBuf(1, this.posLen, gl.FLOAT, false, 0),
+        mkBuf(2, this.normWid, gl.FLOAT, false, 0),
+        mkBuf(3, this.tanMeta, gl.FLOAT, false, 0),
+        mkBuf(4, this.colLit, gl.UNSIGNED_BYTE, true, 0),
+        mkBuf(5, this.colShd, gl.UNSIGNED_BYTE, true, 0)
+      ];
+      gl.bindVertexArray(null);
+      return { vao, count: n, bufs };
+    }
+
+    updateDynamic(gpuObj) {
+      const n = this.count;
+      gpuObj.count = n;
+      const upd = (buf, arr) => {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, arr.subarray(0, n * 4));
+      };
+      upd(gpuObj.bufs[0], this.posLen);
+      upd(gpuObj.bufs[1], this.normWid);
+      upd(gpuObj.bufs[2], this.tanMeta);
+      upd(gpuObj.bufs[3], this.colLit);
+      upd(gpuObj.bufs[4], this.colShd);
+    }
+  }
+
+  // Helper to paint an oriented 3D box/plank/wall/beam with strokes
+  function paintBox(batch, cx, cy, cz, sx, sy, sz, yaw, matType, colL, colS, density = 12, emissive = 0, strokeLen = 0.65, strokeWid = 0.24) {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    const faces = [
+      { n: [0, 0, 1],  u: [1, 0, 0],  v: [0, 1, 0],  du: sx, dv: sy, off: sz * 0.5 },
+      { n: [0, 0, -1], u: [-1, 0, 0], v: [0, 1, 0],  du: sx, dv: sy, off: sz * 0.5 },
+      { n: [1, 0, 0],  u: [0, 0, -1], v: [0, 1, 0],  du: sz, dv: sy, off: sx * 0.5 },
+      { n: [-1, 0, 0], u: [0, 0, 1],  v: [0, 1, 0],  du: sz, dv: sy, off: sx * 0.5 },
+      { n: [0, 1, 0],  u: [1, 0, 0],  v: [0, 0, 1],  du: sx, dv: sz, off: sy * 0.5 }
+    ];
+    for (const f of faces) {
+      const area = f.du * f.dv;
+      const count = Math.max(2, Math.round(area * density * strokeBudgetScale));
+      for (let i = 0; i < count; i++) {
+        const lu = (rand() - 0.5) * f.du;
+        const lv = (rand() - 0.5) * f.dv;
+        const lx = f.n[0]*f.off + f.u[0]*lu + f.v[0]*lv;
+        const ly = f.n[1]*f.off + f.u[1]*lu + f.v[1]*lv;
+        const lz = f.n[2]*f.off + f.u[2]*lu + f.v[2]*lv;
+        const wx = cx + lx * c + lz * s;
+        const wy = cy + ly;
+        const wz = cz - lx * s + lz * c;
+        const nwx = f.n[0]*c + f.n[2]*s, nwy = f.n[1], nwz = -f.n[0]*s + f.n[2]*c;
+        const tw = (rand() < 0.7) ? f.u : f.v;
+        const twx = tw[0]*c + tw[2]*s + (rand()-0.5)*0.2, twy = tw[1] + (rand()-0.5)*0.15, twz = -tw[0]*s + tw[2]*c + (rand()-0.5)*0.2;
+        batch.push(wx, wy, wz, strokeLen * randRange(0.75, 1.3), nwx, nwy, nwz, strokeWid * randRange(0.75, 1.25), twx, twy, twz, matType, colL, colS, emissive, 0.7);
+      }
+    }
+  }
+
+  // Helper to paint a cylinder/cone/trunk
+  function paintCylinder(batch, cx, cy, cz, rBot, rTop, height, matType, colL, colS, density = 14, verticalStrokes = true, emissive = 0, yawBias = 0) {
+    const area = Math.PI * (rBot + rTop) * height;
+    const count = Math.max(6, Math.round(area * density * strokeBudgetScale));
+    for (let i = 0; i < count; i++) {
+      const t = rand();
+      const ang = rand() * Math.PI * 2;
+      const r = mix(rBot, rTop, t);
+      const px = cx + Math.cos(ang) * r;
+      const py = cy + t * height;
+      const pz = cz + Math.sin(ang) * r;
+      const nx = Math.cos(ang), nz = Math.sin(ang), ny = (rBot - rTop) / Math.max(height, 0.1);
+      const tx = verticalStrokes ? Math.sin(yawBias) * 0.2 : -Math.sin(ang);
+      const ty = verticalStrokes ? 1.0 : 0.15;
+      const tz = verticalStrokes ? Math.cos(yawBias) * 0.2 : Math.cos(ang);
+      const l = clamp(height * 0.22, 0.28, 1.25) * randRange(0.75, 1.3);
+      const w = clamp(r * 0.65, 0.14, 0.55) * randRange(0.75, 1.25);
+      batch.push(px, py, pz, l, nx, ny, nz, w, tx, ty, tz, matType, colL, colS, emissive, 0.72);
+    }
+  }
+
+  // =========================================================================
+  // 7. Build Scene Layers (Solid Silhouettes + ~800K Strokes)
+  // =========================================================================
+  function setLoadProgress(pct, msg) {
+    loaderBar.style.width = `${pct}%`;
+    loaderText.textContent = msg;
+  }
+
+  // 7A. Solid Silhouette Meshes (Sky Backdrop + 3 Mountain Layers)
+  function buildSolidMesh(positions, colors) {
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    const pBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, pBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+    const cBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, cBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+    return { vao, vertCount: positions.length / 3 };
+  }
+
+  // Sky solid backdrop dome
+  let skySolidMesh;
+  {
+    const pos = [], col = [];
+    const rings = 18, segs = 48, R = 690;
+    for (let r = 0; r < rings; r++) {
+      const phi0 = (r / rings) * Math.PI * 0.62 - 0.12;
+      const phi1 = ((r + 1) / rings) * Math.PI * 0.62 - 0.12;
+      for (let s = 0; s < segs; s++) {
+        const th0 = (s / segs) * Math.PI * 2;
+        const th1 = ((s + 1) / segs) * Math.PI * 2;
+        const pt = (ph, th) => [R * Math.cos(ph) * Math.cos(th), R * Math.sin(ph), R * Math.cos(ph) * Math.sin(th)];
+        const p00 = pt(phi0, th0), p10 = pt(phi0, th1), p01 = pt(phi1, th0), p11 = pt(phi1, th1);
+        const c = (ph) => {
+          const k = clamp((ph + 0.1) / 1.3, 0, 1);
+          return [mix(0.04, 0.03, k), mix(0.10, 0.08, k), mix(0.26, 0.22, k)];
+        };
+        const c0 = c(phi0), c1 = c(phi1);
+        pos.push(...p00, ...p10, ...p11, ...p00, ...p11, ...p01);
+        col.push(...c0, ...c0, ...c1, ...c0, ...c1, ...c1);
+      }
+    }
+    skySolidMesh = buildSolidMesh(pos, col);
+  }
+
+  // Three Mountain Layer Solid Silhouettes
+  const mountainSolidMeshes = [];
+  {
+    const baseCols = [
+      [0.03, 0.07, 0.17], // Layer 1 near indigo
+      [0.05, 0.11, 0.27], // Layer 2 mid ultramarine
+      [0.07, 0.14, 0.32]  // Layer 3 far alpine base
+    ];
+    for (let layer = 0; layer < 3; layer++) {
+      const pos = [], col = [];
+      const segs = 220;
+      const bc = baseCols[layer];
+      for (let s = 0; s < segs; s++) {
+        const a0 = (s / segs) * Math.PI * 2;
+        const a1 = ((s + 1) / segs) * Math.PI * 2;
+        const r0 = getMountainRadius(layer, a0) + 1.8;
+        const r1 = getMountainRadius(layer, a1) + 1.8;
+        const h0 = getMountainHeight(layer, a0) - 0.6;
+        const h1 = getMountainHeight(layer, a1) - 0.6;
+        const yBot = -22;
+        const p0b = [r0 * Math.cos(a0), yBot, r0 * Math.sin(a0)];
+        const p1b = [r1 * Math.cos(a1), yBot, r1 * Math.sin(a1)];
+        const p0t = [r0 * Math.cos(a0), h0,   r0 * Math.sin(a0)];
+        const p1t = [r1 * Math.cos(a1), h1,   r1 * Math.sin(a1)];
+        const tc0 = (layer === 2 && h0 > 114) ? [0.28, 0.39, 0.58] : bc;
+        const tc1 = (layer === 2 && h1 > 114) ? [0.28, 0.39, 0.58] : bc;
+        pos.push(...p0b, ...p1b, ...p1t, ...p0b, ...p1t, ...p0t);
+        col.push(...bc, ...bc, ...tc1, ...bc, ...tc1, ...tc0);
+      }
+      mountainSolidMeshes.push(buildSolidMesh(pos, col));
+    }
+  }
+
+  // 7B. Sky Swirls + Moon + Concentric Halos + Radiant Stars
+  function skyFlowJS(dx, dy, dz) {
+    const l = Math.hypot(dx, dy, dz) || 1;
+    dx /= l; dy /= l; dz /= l;
+    let vx = -dz * 0.34, vy = 0, vz = dx * 0.34;
+    const az = Math.atan2(dz, dx);
+    vy += Math.cos(az * 2.5 + dy * 4.0) * 0.16;
+    const vortices = [
+      { c: norm3(-0.26, 0.48, -0.84), s: 1.75, r2: 0.16 },
+      { c: norm3( 0.16, 0.62, -0.77), s: -1.45, r2: 0.11 },
+      { c: norm3(-0.66, 0.27, -0.70), s: 1.25, r2: 0.08 }
+    ];
+    for (const vt of vortices) {
+      const d = clamp(dx*vt.c[0] + dy*vt.c[1] + dz*vt.c[2], -1, 1);
+      const a = Math.acos(d);
+      let tx = vt.c[1]*dz - vt.c[2]*dy;
+      let ty = vt.c[2]*dx - vt.c[0]*dz;
+      let tz = vt.c[0]*dy - vt.c[1]*dx;
+      const tl = Math.hypot(tx, ty, tz);
+      if (tl > 1e-4) {
+        const w = vt.s * Math.exp(-(a * a) / vt.r2) / tl;
+        vx += tx * w; vy += ty * w; vz += tz * w;
+      }
+    }
+    const radial = vx*dx + vy*dy + vz*dz;
+    vx -= dx * radial; vy -= dy * radial; vz -= dz * radial;
+    const vl = Math.hypot(vx, vy, vz) || 1;
+    return [vx / vl, vy / vl, vz / vl];
+  }
+
+  const skyCap = Math.round(92000 * strokeBudgetScale);
+  const skyBatch = new StrokeBatch(skyCap + 12000);
+  {
+    const R_SKY = 650;
+    const swirlN = Math.round(82000 * strokeBudgetScale);
+    const skyPalettes = [
+      [[0.09, 0.23, 0.56], [0.04, 0.10, 0.30]], // Cobalt
+      [[0.14, 0.34, 0.76], [0.06, 0.16, 0.46]], // Ultramarine
+      [[0.16, 0.50, 0.60], [0.07, 0.27, 0.42]], // Teal-turquoise
+      [[0.05, 0.14, 0.38], [0.02, 0.07, 0.22]], // Deep Prussian
+      [[0.46, 0.68, 0.72], [0.18, 0.40, 0.58]]  // Pale luminous swirl wisps
+    ];
+    const vCenters = [
+      norm3(-0.26, 0.48, -0.84),
+      norm3( 0.16, 0.62, -0.77),
+      norm3(-0.66, 0.27, -0.70)
+    ];
+
+    for (let i = 0; i < swirlN; i++) {
+      // Sample upper hemisphere down to slightly below horizon
+      const u = rand();
+      const sinPhi = mix(-0.04, 0.995, Math.pow(u, 0.85));
+      const cosPhi = Math.sqrt(Math.max(0, 1 - sinPhi * sinPhi));
+      const th = rand() * Math.PI * 2;
+      const dx = cosPhi * Math.cos(th), dy = sinPhi, dz = cosPhi * Math.sin(th);
+      const t = skyFlowJS(dx, dy, dz);
+
+      // Ribbon color band based on vortex proximity + wave phase
+      let band = Math.sin(azPhase(dx, dy, dz) * 14.0);
+      let nearV = 0;
+      for (const vc of vCenters) {
+        const a = Math.acos(clamp(dx*vc[0] + dy*vc[1] + dz*vc[2], -1, 1));
+        nearV = Math.max(nearV, Math.exp(-(a*a)/0.12));
+        band += Math.sin(a * 24.0) * Math.exp(-(a*a)/0.25) * 1.4;
+      }
+
+      let palIdx = 0;
+      if (nearV > 0.45 && band > 0.7) palIdx = 4;
+      else if (band > 0.45) palIdx = 2;
+      else if (band > -0.1) palIdx = 1;
+      else if (band > -0.7) palIdx = 0;
+      else palIdx = 3;
+
+      const pal = skyPalettes[palIdx];
+      const distToMoon = Math.acos(clamp(dx*MOON_DIR[0] + dy*MOON_DIR[1] + dz*MOON_DIR[2], -1, 1));
+      // Keep direct moon disk clean for moon strokes
+      if (distToMoon < 0.075) continue;
+
+      const len = randRange(18, 34) * (1.0 - 0.35 * sinPhi);
+      const wid = randRange(4.8, 9.2);
+      skyBatch.push(dx*R_SKY, dy*R_SKY, dz*R_SKY, len, -dx, -dy, -dz, wid, t[0], t[1], t[2], 2, pal[0], pal[1], nearV * 0.25, 0.78);
+    }
+
+    function azPhase(dx, dy, dz) {
+      return dy * 1.6 + 0.35 * Math.sin(Math.atan2(dz, dx) * 2.5);
+    }
+
+    // Golden-Orange Full Moon + Concentric Halo Rings
+    const R_MOON = 620;
+    const mRight = norm3(...cross3([0, 1, 0], MOON_DIR));
+    const mUp = norm3(...cross3(MOON_DIR, mRight));
+    const moonCoreN = Math.round(900 * strokeBudgetScale);
+    for (let i = 0; i < moonCoreN; i++) {
+      const rr = Math.sqrt(rand()) * 0.056;
+      const a = rand() * Math.PI * 2;
+      const ox = Math.cos(a) * rr, oy = Math.sin(a) * rr;
+      const d = norm3(
+        MOON_DIR[0] + mRight[0]*ox + mUp[0]*oy,
+        MOON_DIR[1] + mRight[1]*ox + mUp[1]*oy,
+        MOON_DIR[2] + mRight[2]*ox + mUp[2]*oy
+      );
+      const tang = norm3(
+        mRight[0]*(-Math.sin(a)) + mUp[0]*Math.cos(a),
+        mRight[1]*(-Math.sin(a)) + mUp[1]*Math.cos(a),
+        mRight[2]*(-Math.sin(a)) + mUp[2]*Math.cos(a)
+      );
+      const coreCol = rr < 0.032 ? [1.0, 0.86, 0.42] : [1.0, 0.64, 0.14];
+      const shdCol  = [0.95, 0.52, 0.10];
+      skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(8, 15), -d[0], -d[1], -d[2], randRange(3.6, 6.4), tang[0], tang[1], tang[2], 6, coreCol, shdCol, 0.95, 0.85);
+    }
+
+    // Concentric moon halo rings
+    const ringRadii = [0.072, 0.102, 0.135, 0.172, 0.215];
+    const ringCols = [
+      [[1.0, 0.78, 0.26], [0.94, 0.58, 0.14]],
+      [[0.98, 0.88, 0.46], [0.85, 0.68, 0.24]],
+      [[0.84, 0.84, 0.56], [0.54, 0.66, 0.52]],
+      [[0.38, 0.72, 0.74], [0.22, 0.48, 0.62]],
+      [[0.22, 0.52, 0.72], [0.14, 0.34, 0.58]]
+    ];
+    for (let rIdx = 0; rIdx < ringRadii.length; rIdx++) {
+      const rBase = ringRadii[rIdx];
+      const nRing = Math.round((520 + rIdx * 180) * strokeBudgetScale);
+      const rc = ringCols[rIdx];
+      for (let i = 0; i < nRing; i++) {
+        const a = (i / nRing) * Math.PI * 2 + randRange(-0.02, 0.02);
+        const rr = rBase + randRange(-0.012, 0.012);
+        const ox = Math.cos(a) * rr, oy = Math.sin(a) * rr;
+        const d = norm3(
+          MOON_DIR[0] + mRight[0]*ox + mUp[0]*oy,
+          MOON_DIR[1] + mRight[1]*ox + mUp[1]*oy,
+          MOON_DIR[2] + mRight[2]*ox + mUp[2]*oy
+        );
+        const tang = norm3(
+          mRight[0]*(-Math.sin(a)) + mUp[0]*Math.cos(a),
+          mRight[1]*(-Math.sin(a)) + mUp[1]*Math.cos(a),
+          mRight[2]*(-Math.sin(a)) + mUp[2]*Math.cos(a)
+        );
+        skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(13, 24), -d[0], -d[1], -d[2], randRange(3.5, 6.2), tang[0], tang[1], tang[2], 6, rc[0], rc[1], 0.85 - rIdx*0.14, 0.75);
+      }
+    }
+
+    // 11 Radiant Golden-Yellow Stars (Starburst rays + concentric rings)
+    const heroStars = [
+      norm3(-0.34, 0.25, -0.90), // Prominent Venus near cypress
+      norm3(-0.62, 0.52, -0.58),
+      norm3(-0.08, 0.72, -0.69),
+      norm3( 0.28, 0.76, -0.58),
+      norm3(-0.82, 0.36, -0.44),
+      norm3( 0.78, 0.45, -0.42),
+      norm3( 0.65, 0.56,  0.51),
+      norm3(-0.45, 0.65,  0.60),
+      norm3( 0.05, 0.46,  0.88),
+      norm3(-0.84, 0.44,  0.31),
+      norm3( 0.42, 0.28,  0.86)
+    ];
+    for (let sIdx = 0; sIdx < heroStars.length; sIdx++) {
+      const sd = heroStars[sIdx];
+      const sr = norm3(...cross3([0, 1, 0], sd));
+      const su = norm3(...cross3(sd, sr));
+      const scaleS = (sIdx === 0) ? 1.45 : randRange(0.78, 1.15);
+
+      // Soft glowing star core + golden starburst radial rays
+      for (let c = 0; c < Math.max(8, Math.round(16 * strokeBudgetScale)); c++) {
+        const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * 0.015 * scaleS;
+        const ox = Math.cos(a) * rr, oy = Math.sin(a) * rr;
+        const d = norm3(sd[0] + sr[0]*ox + su[0]*oy, sd[1] + sr[1]*ox + su[1]*oy, sd[2] + sr[2]*ox + su[2]*oy);
+        skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(8, 13)*scaleS, -d[0], -d[1], -d[2], randRange(4.0, 6.5)*scaleS, sr[0]*Math.cos(a)+su[0]*Math.sin(a), sr[1]*Math.cos(a)+su[1]*Math.sin(a), sr[2]*Math.cos(a)+su[2]*Math.sin(a), 6, [1.0, 0.96, 0.72], [1.0, 0.80, 0.30], 1.0, 0.7);
+      }
+      const nRays = 16;
+      const segsPerRay = Math.max(2, Math.round(5 * strokeBudgetScale));
+      for (let r = 0; r < nRays; r++) {
+        const a = (r / nRays) * Math.PI * 2 + randRange(-0.08, 0.08);
+        const rayDir = norm3(
+          sr[0]*Math.cos(a) + su[0]*Math.sin(a),
+          sr[1]*Math.cos(a) + su[1]*Math.sin(a),
+          sr[2]*Math.cos(a) + su[2]*Math.sin(a)
+        );
+        for (let k = 0; k < segsPerRay; k++) {
+          const distA = (0.012 + (k / segsPerRay) * 0.052) * scaleS;
+          const d = norm3(sd[0] + rayDir[0]*distA, sd[1] + rayDir[1]*distA, sd[2] + rayDir[2]*distA);
+          const colL = k < 2 ? [1.0, 0.94, 0.56] : [1.0, 0.76, 0.20];
+          const colS = [0.88, 0.62, 0.16];
+          skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(9, 16)*scaleS, -d[0], -d[1], -d[2], randRange(2.2, 4.0)*scaleS*(1.0 - k*0.1), rayDir[0], rayDir[1], rayDir[2], 6, colL, colS, 0.95, 0.8);
+        }
+      }
+      // Concentric star halo rings
+      for (const hr of [0.025 * scaleS, 0.044 * scaleS]) {
+        const nH = Math.max(16, Math.round(40 * strokeBudgetScale));
+        for (let k = 0; k < nH; k++) {
+          const a = (k / nH) * Math.PI * 2;
+          const ox = Math.cos(a) * hr, oy = Math.sin(a) * hr;
+          const d = norm3(sd[0] + sr[0]*ox + su[0]*oy, sd[1] + sr[1]*ox + su[1]*oy, sd[2] + sr[2]*ox + su[2]*oy);
+          const tang = norm3(sr[0]*(-Math.sin(a)) + su[0]*Math.cos(a), sr[1]*(-Math.sin(a)) + su[1]*Math.cos(a), sr[2]*(-Math.sin(a)) + su[2]*Math.cos(a));
+          const colL = hr < 0.035 ? [1.0, 0.88, 0.42] : [0.58, 0.82, 0.78];
+          skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(8, 14)*scaleS, -d[0], -d[1], -d[2], randRange(2.4, 4.0), tang[0], tang[1], tang[2], 6, colL, [0.35, 0.55, 0.65], 0.68, 0.7);
+        }
+      }
+    }
+  }
+  const skyGPU = skyBatch.upload();
+
+  // 7C. Three Mountain Layers (Layer 3 has Snow-Capped Peaks!)
+  setLoadProgress(25, '正在堆疊三層山脈與積雪山脊…');
+  const mtnCap = Math.round(145000 * strokeBudgetScale);
+  const mtnBatch = new StrokeBatch(mtnCap + 4000);
+  {
+    const counts = [
+      Math.round(38000 * strokeBudgetScale),
+      Math.round(48000 * strokeBudgetScale),
+      Math.round(56000 * strokeBudgetScale)
+    ];
+    for (let layer = 0; layer < 3; layer++) {
+      const N = counts[layer];
+      for (let i = 0; i < N; i++) {
+        const ang = rand() * Math.PI * 2;
+        const rBase = getMountainRadius(layer, ang);
+        const hPeak = getMountainHeight(layer, ang);
+        const vFrac = rand();
+        const y = mix(-8, hPeak, Math.pow(vFrac, 0.82));
+        // Sloped inward slightly from base to crest
+        const r = rBase - vFrac * (layer === 0 ? 12 : (layer === 1 ? 20 : 32));
+        const px = r * Math.cos(ang), pz = r * Math.sin(ang);
+        const nx = -Math.cos(ang) * 0.85, ny = 0.52, nz = -Math.sin(ang) * 0.85;
+
+        // Ridge slope tangent
+        const da = 0.03;
+        const dh = getMountainHeight(layer, ang + da) - getMountainHeight(layer, ang - da);
+        const tx = -Math.sin(ang) + (rand()-0.5)*0.2;
+        const ty = (dh / (2 * da * r)) * 2.2 + (rand()-0.5)*0.25;
+        const tz = Math.cos(ang) + (rand()-0.5)*0.2;
+
+        let colL, colS, mType = 1;
+        if (layer === 0) {
+          colL = [0.09, 0.18, 0.34]; colS = [0.04, 0.08, 0.18];
+        } else if (layer === 1) {
+          colL = [0.13, 0.25, 0.52]; colS = [0.06, 0.12, 0.28];
+        } else {
+          // Layer 3: Snow-capped alpine peaks with feathered snowline & dark rock ridges
+          const snowThreshold = 98 + 14 * Math.sin(ang * 13.0) + 12 * (rand() - 0.5);
+          const isRockRidge = rand() < 0.24 && y < hPeak - 8;
+          if (y > snowThreshold && !isRockRidge) {
+            mType = 7;
+            const snowBlend = smoothstep(snowThreshold, snowThreshold + 24, y);
+            colL = [mix(0.38, 0.82, snowBlend), mix(0.52, 0.89, snowBlend), mix(0.76, 0.98, snowBlend)];
+            colS = [0.18, 0.31, 0.56];
+          } else {
+            mType = 7;
+            colL = [0.14, 0.26, 0.50]; colS = [0.06, 0.12, 0.28];
+          }
+        }
+
+        const len = (layer === 0 ? randRange(4.5, 9.0) : (layer === 1 ? randRange(7.5, 14.5) : randRange(11, 22)));
+        const wid = len * randRange(0.28, 0.42);
+        mtnBatch.push(px, y, pz, len, nx, ny, nz, wid, tx, ty, tz, mType, colL, colS, 0, 0.72);
+      }
+    }
+  }
+  const mtnGPU = mtnBatch.upload();
+
+  // 7D. World Static (Terrain, Paths, Sunflowers, Wheat, Windmill Tower, Cottage, Village & Church, Cypresses, Bridges, Cliff, Obstacles)
+  setLoadProgress(48, '正在繪製向日葵花田、麥田、風車與村莊教堂…');
+  const worldCap = Math.round(470000 * strokeBudgetScale);
+  const worldBatch = new StrokeBatch(worldCap + 20000);
+
+  // 1) Valley Terrain Strokes
+  {
+    const nTerr = Math.round(210000 * strokeBudgetScale);
+    for (let i = 0; i < nTerr; i++) {
+      // Importance-sampled radius: denser inside r < 115m, sparser out to 160m
+      const u = rand();
+      const rad = (u < 0.78) ? Math.sqrt(rand()) * 112.0 : mix(112.0, 165.0, rand());
+      const ang = rand() * Math.PI * 2;
+      const x = rad * Math.cos(ang), z = rad * Math.sin(ang);
+
+      // Skip river water core & road center (dedicated dense strokes cover those)
+      if (getRiverDistance(x, z) < -0.5) continue;
+      const pInfo = getPathInfo(x, z);
+      if (pInfo.dist < 2.3) continue;
+      if (getVillageRoadDist(x, z) < 2.0) continue;
+
+      const y = getRawTerrainHeight(x, z);
+      const n = getTerrainNormal(x, z);
+      const flow = fbm2(x * 0.045, z * 0.045, 2) * Math.PI * 2;
+      const tx = Math.cos(flow), tz = Math.sin(flow), ty = -(n[0]*tx + n[2]*tz) / Math.max(n[1], 0.25);
+
+      const slope = 1.0 - n[1];
+      let colL, colS;
+      if (slope > 0.28 || (x < -73 && Math.abs(z - WATERFALL_POS.z) < 25)) {
+        // Rocky slope / cliff
+        colL = [0.16, 0.22, 0.34]; colS = [0.06, 0.09, 0.17];
+      } else {
+        // Meadow greens & deep olive-teal
+        const patch = fbm2(x * 0.04 + 3.1, z * 0.04 + 7.2, 2);
+        colL = [mix(0.14, 0.26, patch), mix(0.28, 0.42, patch), mix(0.18, 0.24, patch)];
+        colS = [0.05, 0.11, 0.14];
+      }
+
+      const distFactor = smoothstep(55, 160, rad);
+      const len = randRange(1.45, 2.75) * (1.0 + distFactor * 2.5);
+      const wid = len * randRange(0.46, 0.62);
+      worldBatch.push(x, y + 0.04, z, len, n[0], n[1], n[2], wid, tx, ty, tz, 0, colL, colS, 0, 0.60);
+    }
+  }
+
+  // 2) Circular Path & Village Road Strokes
+  {
+    const nPath = Math.round(32000 * strokeBudgetScale);
+    for (let i = 0; i < nPath; i++) {
+      const s = rand() * totalPathLen;
+      const pt = samplePathByS(s);
+      const across = (rand() - 0.5) * 5.2;
+      const x = pt.x - pt.tz * across;
+      const z = pt.z + pt.tx * across;
+      if (getBridgeAt(x, z)) continue; // Bridge deck handles river crossing
+      const y = getRawTerrainHeight(x, z);
+      const n = getTerrainNormal(x, z);
+      const edge = Math.abs(across) / 2.6;
+      const colL = edge > 0.72 ? [0.24, 0.28, 0.24] : [0.42, 0.36, 0.26];
+      const colS = [0.12, 0.14, 0.20];
+      worldBatch.push(x, y + 0.07, z, randRange(0.85, 1.65), n[0], n[1], n[2], randRange(0.36, 0.58), pt.tx, 0.05, pt.tz, 0, colL, colS, 0, 0.68);
+    }
+
+    // Village lane
+    const nVilRoad = Math.round(4500 * strokeBudgetScale);
+    for (let i = 0; i < nVilRoad; i++) {
+      const t = rand();
+      const across = (rand() - 0.5) * 4.2;
+      const ax = 60, az = -6, bx = 104, bz = -16;
+      const dl = Math.hypot(bx - ax, bz - az);
+      const tx = (bx - ax) / dl, tz = (bz - az) / dl;
+      const x = mix(ax, bx, t) - tz * across;
+      const z = mix(az, bz, t) + tx * across;
+      const y = getRawTerrainHeight(x, z);
+      const n = getTerrainNormal(x, z);
+      worldBatch.push(x, y + 0.07, z, randRange(0.8, 1.45), n[0], n[1], n[2], randRange(0.34, 0.54), tx, 0.05, tz, 0, [0.40, 0.36, 0.28], [0.14, 0.16, 0.22], 0, 0.68);
+    }
+  }
+
+  // 3) Sunflower Field (Nighttime bowed heads, ALL facing the same direction!)
+  {
+    const nFlowers = Math.round(380 * strokeBudgetScale);
+    // Uniform direction: East-Northeast (facing the rising moon), bowed downward at night (~48 deg below horizontal)
+    const sfYaw = 0.35;
+    const faceDir = [Math.cos(sfYaw), -0.72, Math.sin(sfYaw)]; // Bowed down!
+    const fNorm = norm3(...faceDir);
+    const fRight = norm3(...cross3([0, 1, 0], fNorm));
+    const fUp = norm3(...cross3(fNorm, fRight));
+
+    for (let i = 0; i < nFlowers; i++) {
+      const fx = randRange(-36, 24);
+      const fz = randRange(23, 52);
+      if (getPathInfo(fx, fz).dist < 4.0) continue;
+      if (getRiverDistance(fx, fz) < 2.5) continue;
+      if (Math.hypot(fx - COTTAGE_POS.x, fz - COTTAGE_POS.z) < 6.5) continue;
+
+      const fy = getRawTerrainHeight(fx, fz);
+      const h = randRange(1.25, 1.95);
+      // Slight bend near top of stalk for bowed head
+      for (let seg = 0; seg < 4; seg++) {
+        const t = seg / 4;
+        const bend = t * t * 0.24;
+        const sx = fx + Math.cos(sfYaw) * bend;
+        const sy = fy + t * h;
+        const sz = fz + Math.sin(sfYaw) * bend;
+        worldBatch.push(sx, sy + 0.2, sz, 0.42, 0.4, 0.3, 0.8, 0.10, Math.cos(sfYaw)*t*0.5, 1.0, Math.sin(sfYaw)*t*0.5, 0, [0.22, 0.42, 0.18], [0.06, 0.14, 0.10], 0, 0.65);
+      }
+      // 3 broad leaves
+      for (let lf = 0; lf < 3; lf++) {
+        const la = rand() * Math.PI * 2;
+        const ly = fy + randRange(0.45, 0.85) * h;
+        worldBatch.push(fx + Math.cos(la)*0.18, ly, fz + Math.sin(la)*0.18, 0.38, 0.1, 0.95, 0.1, 0.20, Math.cos(la), -0.35, Math.sin(la), 0, [0.20, 0.44, 0.18], [0.06, 0.14, 0.10], 0, 0.6);
+      }
+
+      // Bowed flower head
+      const hx = fx + Math.cos(sfYaw) * 0.26;
+      const hy = fy + h;
+      const hz = fz + Math.sin(sfYaw) * 0.26;
+
+      // Dark brown seed center (3 dabs)
+      for (let d = 0; d < 3; d++) {
+        const ox = (rand()-0.5)*0.14, oy = (rand()-0.5)*0.14;
+        worldBatch.push(hx + fRight[0]*ox + fUp[0]*oy, hy + fRight[1]*ox + fUp[1]*oy, hz + fRight[2]*ox + fUp[2]*oy,
+          0.22, fNorm[0], fNorm[1], fNorm[2], 0.20, fRight[0], fRight[1], fRight[2], 0, [0.26, 0.15, 0.08], [0.09, 0.06, 0.08], 0, 0.8);
+      }
+      // 12 golden petals radiating around bowed face
+      for (let p = 0; p < 12; p++) {
+        const pa = (p / 12) * Math.PI * 2 + randRange(-0.1, 0.1);
+        const rx = fRight[0]*Math.cos(pa) + fUp[0]*Math.sin(pa);
+        const ry = fRight[1]*Math.cos(pa) + fUp[1]*Math.sin(pa);
+        const rz = fRight[2]*Math.cos(pa) + fUp[2]*Math.sin(pa);
+        const pColL = (p % 2 === 0) ? [0.95, 0.74, 0.16] : [0.88, 0.62, 0.12];
+        const pColS = [0.42, 0.30, 0.10];
+        worldBatch.push(hx + rx*0.21, hy + ry*0.21, hz + rz*0.21, 0.28, fNorm[0], fNorm[1], fNorm[2], 0.11, rx, ry, rz, 0, pColL, pColS, 0, 0.75);
+      }
+    }
+  }
+
+  // 4) Swaying Wheat Field
+  {
+    const nWheat = Math.round(40000 * strokeBudgetScale);
+    for (let i = 0; i < nWheat; i++) {
+      const wx = randRange(-40, 26);
+      const wz = randRange(-50, -14);
+      if (getPathInfo(wx, wz).dist < 3.6) continue;
+      if (Math.hypot(wx - WINDMILL_POS.x, wz - WINDMILL_POS.z) < 7.5) continue;
+      const wy = getRawTerrainHeight(wx, wz);
+      const h = randRange(0.75, 1.30);
+      const isEar = rand() < 0.42;
+      const colL = isEar ? [0.88, 0.68, 0.24] : [0.58, 0.48, 0.20];
+      const colS = [0.20, 0.20, 0.14];
+      worldBatch.push(wx, wy + h * (isEar ? 0.85 : 0.45), wz, isEar ? 0.34 : h * 0.85, 0.3, 0.3, 0.9, isEar ? 0.12 : 0.08, (rand()-0.5)*0.25, 1.0, (rand()-0.5)*0.25, 3, colL, colS, 0, 0.7);
+    }
+  }
+
+  // 5) Rotating Windmill Tower (Static stone body + glowing window; sails in separate animated batch)
+  const WINDMILL_BASE_Y = getRawTerrainHeight(WINDMILL_POS.x, WINDMILL_POS.z);
+  const WINDMILL_HUB = { x: WINDMILL_POS.x, y: WINDMILL_BASE_Y + 9.2, z: WINDMILL_POS.z + 3.0 };
+  {
+    paintCylinder(worldBatch, WINDMILL_POS.x, WINDMILL_BASE_Y - 0.5, WINDMILL_POS.z, 3.3, 2.3, 10.5, 1, [0.52, 0.46, 0.40], [0.18, 0.20, 0.30], 26, false);
+    paintCylinder(worldBatch, WINDMILL_POS.x, WINDMILL_BASE_Y + 9.8, WINDMILL_POS.z, 2.6, 0.25, 3.2, 1, [0.36, 0.24, 0.20], [0.12, 0.10, 0.18], 26, true);
+    // Warm glowing windmill windows (matType 8 = crisp world emissive)
+    paintBox(worldBatch, WINDMILL_POS.x + 0.1, WINDMILL_BASE_Y + 4.4, WINDMILL_POS.z + 2.85, 1.1, 1.3, 0.3, 0, 8, [1.0, 0.78, 0.28], [0.95, 0.55, 0.12], 32, 0.95, 0.38, 0.22);
+    paintBox(worldBatch, WINDMILL_POS.x, WINDMILL_BASE_Y + 1.3, WINDMILL_POS.z + 3.2, 1.3, 2.2, 0.3, 0, 1, [0.38, 0.22, 0.12], [0.16, 0.10, 0.08], 22);
+  }
+
+  // 6) Lit-Window Cottage by the Path & Sunflowers
+  {
+    const cy = getRawTerrainHeight(COTTAGE_POS.x, COTTAGE_POS.z);
+    const yaw = 0.48;
+    // Stone walls
+    paintBox(worldBatch, COTTAGE_POS.x, cy + 1.8, COTTAGE_POS.z, 6.2, 3.6, 4.8, yaw, 1, [0.58, 0.52, 0.44], [0.18, 0.22, 0.32], 24);
+    // Pitched roof (2 sloped planes)
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    for (let side of [-1, 1]) {
+      const nSide = Math.round(900 * strokeBudgetScale);
+      for (let i = 0; i < nSide; i++) {
+        const u = (rand() - 0.5) * 6.8;
+        const v = rand();
+        const lx = u;
+        const ly = 3.5 + (1 - v) * 2.3;
+        const lz = side * v * 2.9;
+        const wx = COTTAGE_POS.x + lx * c + lz * s;
+        const wz = COTTAGE_POS.z - lx * s + lz * c;
+        const nx = (side * 0.65) * s, ny = 0.76, nz = (side * 0.65) * c;
+        worldBatch.push(wx, cy + ly, wz, randRange(0.5, 0.9), nx, ny, nz, randRange(0.24, 0.40), c, 0, -s, 1, [0.46, 0.24, 0.18], [0.14, 0.10, 0.16], 0, 0.75);
+      }
+    }
+    // Chimney + curling smoke strokes
+    paintBox(worldBatch, COTTAGE_POS.x - 1.6*c, cy + 5.6, COTTAGE_POS.z + 1.6*s, 0.9, 1.8, 0.9, yaw, 1, [0.42, 0.36, 0.34], [0.14, 0.15, 0.22], 24);
+    for (let k = 0; k < Math.round(80 * strokeBudgetScale); k++) {
+      const t = k / 80;
+      worldBatch.push(COTTAGE_POS.x - 1.6*c + Math.sin(t*5)*0.6, cy + 6.7 + t * 5.2, COTTAGE_POS.z + 1.6*s + t * 1.4, randRange(0.6, 1.2), 0.3, 0.4, 0.85, randRange(0.3, 0.55), 0.2, 1.0, 0.25, 3, [0.45, 0.52, 0.65], [0.18, 0.24, 0.38], 0, 0.4);
+    }
+    // Glowing warm windows & door (matType 8)
+    paintBox(worldBatch, COTTAGE_POS.x + 1.4*c + 2.42*s, cy + 2.0, COTTAGE_POS.z - 1.4*s + 2.42*c, 1.2, 1.2, 0.2, yaw, 8, [1.0, 0.80, 0.28], [0.95, 0.56, 0.12], 38, 0.96, 0.32, 0.22);
+    paintBox(worldBatch, COTTAGE_POS.x - 1.6*c + 2.42*s, cy + 2.0, COTTAGE_POS.z + 1.6*s + 2.42*c, 1.2, 1.2, 0.2, yaw, 8, [1.0, 0.78, 0.26], [0.95, 0.54, 0.12], 38, 0.96, 0.32, 0.22);
+    paintBox(worldBatch, COTTAGE_POS.x + 3.12*c, cy + 1.4, COTTAGE_POS.z - 3.12*s, 0.25, 2.2, 1.1, yaw, 8, [0.95, 0.64, 0.20], [0.55, 0.32, 0.10], 30, 0.75, 0.35, 0.22);
+  }
+
+  // 7) Village & Tall Church Steeple
+  {
+    const chy = getRawTerrainHeight(CHURCH_POS.x, CHURCH_POS.z);
+    // Church nave
+    paintBox(worldBatch, CHURCH_POS.x, chy + 3.8, CHURCH_POS.z, 7.5, 7.6, 12.0, 0.15, 1, [0.48, 0.50, 0.60], [0.16, 0.20, 0.34], 20);
+    // Bell tower base
+    paintBox(worldBatch, CHURCH_POS.x, chy + 9.5, CHURCH_POS.z - 4.2, 4.4, 8.0, 4.4, 0.15, 1, [0.46, 0.48, 0.58], [0.16, 0.20, 0.32], 24);
+    // Iconic tall pointed Church Steeple piercing skyward (~28m total height!)
+    paintCylinder(worldBatch, CHURCH_POS.x, chy + 13.5, CHURCH_POS.z - 4.2, 2.35, 0.14, 15.5, 1, [0.24, 0.30, 0.48], [0.08, 0.12, 0.24], 32, true);
+    // Glowing church lancet windows (matType 8)
+    paintBox(worldBatch, CHURCH_POS.x - 3.8, chy + 3.8, CHURCH_POS.z, 0.25, 3.2, 1.4, 0.15, 8, [1.0, 0.82, 0.34], [0.95, 0.58, 0.14], 40, 0.98, 0.35, 0.22);
+    paintBox(worldBatch, CHURCH_POS.x, chy + 9.8, CHURCH_POS.z - 6.45, 1.1, 2.4, 0.25, 0.15, 8, [1.0, 0.80, 0.30], [0.95, 0.56, 0.14], 40, 0.98, 0.35, 0.22);
+
+    // Surrounding village cottages with glowing windows
+    for (const vh of VILLAGE_HOUSES) {
+      const hy = getRawTerrainHeight(vh.x, vh.z);
+      paintBox(worldBatch, vh.x, hy + vh.h * 0.5, vh.z, vh.w, vh.h, vh.d, vh.yaw, 1, [0.46, 0.44, 0.42], [0.14, 0.18, 0.28], 18);
+      // Pitched roof
+      const c = Math.cos(vh.yaw), s = Math.sin(vh.yaw);
+      for (let side of [-1, 1]) {
+        const nr = Math.round(280 * strokeBudgetScale);
+        for (let i = 0; i < nr; i++) {
+          const u = (rand() - 0.5) * (vh.w + 0.6);
+          const v = rand();
+          const lx = u, ly = vh.h - 0.1 + (1 - v) * 1.9, lz = side * v * (vh.d * 0.58);
+          const wx = vh.x + lx*c + lz*s, wz = vh.z - lx*s + lz*c;
+          worldBatch.push(wx, hy + ly, wz, randRange(0.45, 0.85), side*0.6*s, 0.8, side*0.6*c, randRange(0.22, 0.38), c, 0, -s, 1, [0.38, 0.22, 0.20], [0.12, 0.10, 0.18], 0, 0.72);
+        }
+      }
+      // Warm window on front/side (matType 8)
+      paintBox(worldBatch, vh.x + (vh.d*0.51)*s, hy + vh.h*0.52, vh.z + (vh.d*0.51)*c, 1.0, 1.0, 0.2, vh.yaw, 8, [1.0, 0.78, 0.28], [0.95, 0.55, 0.12], 32, 0.95, 0.32, 0.22);
+    }
+  }
+
+  // 8) Cypresses (Hero foreground cypress + 22 valley/village cypresses)
+  {
+    const cypressSpots = [
+      { x: -46, z: -34, h: 20.5, r: 2.3 }, // Giant Van Gogh Hero Cypress
+      { x: -34, z:  44, h: 12.5, r: 1.5 },
+      { x: -16, z:  54, h: 11.0, r: 1.4 },
+      { x:  28, z: -48, h: 13.5, r: 1.6 },
+      { x:  50, z: -45, h: 11.5, r: 1.4 },
+      { x:  74, z: -28, h: 12.0, r: 1.5 },
+      { x:  82, z: -42, h: 14.0, r: 1.7 },
+      { x: 108, z: -28, h: 13.0, r: 1.6 },
+      { x: 116, z: -10, h: 12.5, r: 1.5 },
+      { x:  78, z:   8, h: 11.5, r: 1.4 },
+      { x:  42, z:  46, h: 13.5, r: 1.6 },
+      { x: -64, z:  32, h: 14.0, r: 1.7 },
+      { x: -66, z: -18, h: 15.0, r: 1.8 }
+    ];
+    for (let k = 0; k < 10; k++) {
+      const a = rand() * Math.PI * 2, r = randRange(74, 108);
+      const x = r * Math.cos(a), z = r * Math.sin(a);
+      if (getRiverDistance(x, z) > 4) cypressSpots.push({ x, z, h: randRange(9, 14.5), r: randRange(1.1, 1.7) });
+    }
+
+    for (const cyTree of cypressSpots) {
+      const by = getRawTerrainHeight(cyTree.x, cyTree.z);
+      const nFol = Math.round(cyTree.h * 110 * strokeBudgetScale);
+      for (let i = 0; i < nFol; i++) {
+        const t = rand();
+        // Sinuous Van Gogh flame silhouette
+        const prof = Math.sin(Math.pow(t, 0.72) * Math.PI) * (1.0 - 0.28 * t) + 0.14 * (1 - t);
+        const rad = cyTree.r * prof * (0.35 + 0.65 * Math.sqrt(rand()));
+        const swayX = Math.sin(t * 7.5) * 0.25 * cyTree.r;
+        const swirl = t * 6.5 + rand() * Math.PI * 2;
+        const px = cyTree.x + swayX + Math.cos(swirl) * rad;
+        const py = by + 0.6 + t * cyTree.h;
+        const pz = cyTree.z + Math.sin(swirl) * rad;
+        const nx = Math.cos(swirl), nz = Math.sin(swirl);
+        // Flame-curling tangents
+        const curl = Math.sin(t * 9.0 + swirl) * 0.55;
+        const tx = -Math.sin(swirl) * 0.75 + curl * 0.3, ty = 0.85, tz = Math.cos(swirl) * 0.75;
+        const colL = [0.08, 0.24, 0.17];
+        const colS = [0.02, 0.06, 0.11];
+        worldBatch.push(px, py, pz, randRange(0.55, 1.15), nx, 0.3, nz, randRange(0.18, 0.33), tx, ty, tz, 1, colL, colS, 0, 0.85);
+      }
+    }
+  }
+
+  // 9) Two Arched Stone Bridges
+  for (const b of bridges) {
+    const nDeck = Math.round(3600 * strokeBudgetScale);
+    for (let i = 0; i < nDeck; i++) {
+      const along = (rand() - 0.5) * 2 * b.halfLen;
+      const across = (rand() - 0.5) * 2 * b.halfWidth;
+      const u = Math.abs(along) / b.halfLen;
+      const y = WATER_Y + 1.35 + b.archRise * Math.pow(Math.cos(u * Math.PI * 0.5), 1.35);
+      const wx = b.x + along * b.tx - across * b.tz;
+      const wz = b.z + along * b.tz + across * b.tx;
+      worldBatch.push(wx, y + 0.04, wz, randRange(0.6, 1.15), 0, 1, 0, randRange(0.26, 0.42), b.tx, 0, b.tz, 1, [0.44, 0.44, 0.48], [0.16, 0.18, 0.28], 0, 0.78);
+    }
+    // Side arch masonry & stone parapets
+    const nWall = Math.round(3200 * strokeBudgetScale);
+    for (let side of [-1, 1]) {
+      for (let i = 0; i < nWall / 2; i++) {
+        const along = (rand() - 0.5) * 2 * b.halfLen;
+        const u = Math.abs(along) / b.halfLen;
+        const deckY = WATER_Y + 1.35 + b.archRise * Math.pow(Math.cos(u * Math.PI * 0.5), 1.35);
+        const y = mix(WATER_Y - 0.6, deckY + 0.95, rand());
+        const across = side * b.halfWidth;
+        const wx = b.x + along * b.tx - across * b.tz;
+        const wz = b.z + along * b.tz + across * b.tx;
+        // Cut arch opening under deck near center
+        if (y < deckY - 0.55 && Math.abs(along) < b.halfLen * 0.62) continue;
+        worldBatch.push(wx, y, wz, randRange(0.6, 1.1), -side*b.tz, 0.15, side*b.tx, randRange(0.28, 0.46), b.tx, (rand()-0.5)*0.2, b.tz, 1, [0.40, 0.42, 0.48], [0.14, 0.17, 0.28], 0, 0.8);
+      }
+    }
+  }
+
+  // 10) Waterfall Rocky Cliff Face & Boulders
+  {
+    const nCliff = Math.round(22000 * strokeBudgetScale);
+    for (let i = 0; i < nCliff; i++) {
+      const z = WATERFALL_POS.z + randRange(-26, 26);
+      const y = randRange(WATER_Y - 0.5, 25.5);
+      const xBase = mix(-77.5, -87.0, clamp(y / 25.0, 0, 1)) + (fbm2(z * 0.15, y * 0.15, 3) - 0.5) * 3.5;
+      const colL = [0.22, 0.28, 0.42];
+      const colS = [0.06, 0.09, 0.18];
+      worldBatch.push(xBase, y, z, randRange(1.2, 2.6), 0.9, 0.28, (rand()-0.5)*0.4, randRange(0.5, 1.1), (rand()-0.5)*0.4, 0.85, (rand()-0.5)*0.6, 1, colL, colS, 0, 0.85);
+    }
+  }
+
+  // 11) Jumpable Obstacles along Path (Wooden Fences, Stone Walls, Fallen Logs)
+  for (const ob of obstacles) {
+    if (ob.type === 'fence') {
+      // Two upright posts + two horizontal rails spanning the path
+      paintBox(worldBatch, ob.x - ob.tz*2.6, ob.y + 0.6, ob.z + ob.tx*2.6, 0.3, 1.3, 0.3, ob.yaw, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 26);
+      paintBox(worldBatch, ob.x + ob.tz*2.6, ob.y + 0.6, ob.z - ob.tx*2.6, 0.3, 1.3, 0.3, ob.yaw, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 26);
+      paintBox(worldBatch, ob.x, ob.y + 0.52, ob.z, 5.6, 0.22, 0.18, ob.yaw, 1, [0.54, 0.38, 0.22], [0.18, 0.14, 0.14], 26);
+      paintBox(worldBatch, ob.x, ob.y + 0.96, ob.z, 5.6, 0.22, 0.18, ob.yaw, 1, [0.56, 0.40, 0.24], [0.18, 0.14, 0.14], 26);
+    } else if (ob.type === 'stoneWall') {
+      paintBox(worldBatch, ob.x, ob.y + 0.48, ob.z, 5.6, 0.96, 0.72, ob.yaw, 1, [0.46, 0.48, 0.54], [0.15, 0.18, 0.28], 26);
+    } else {
+      // Fallen log
+      const nLog = Math.round(600 * strokeBudgetScale);
+      for (let i = 0; i < nLog; i++) {
+        const along = (rand() - 0.5) * 5.6;
+        const ang = rand() * Math.PI * 2;
+        const r = 0.44;
+        const wx = ob.x - ob.tz * along + ob.tx * Math.cos(ang) * r;
+        const wz = ob.z + ob.tx * along + ob.tz * Math.cos(ang) * r;
+        const wy = ob.y + r + Math.sin(ang) * r;
+        const isMoss = Math.sin(ang) > 0.35 && rand() < 0.4;
+        const colL = isMoss ? [0.22, 0.38, 0.20] : [0.42, 0.26, 0.16];
+        const colS = [0.12, 0.10, 0.12];
+        worldBatch.push(wx, wy, wz, randRange(0.45, 0.85), ob.tx*Math.cos(ang), Math.sin(ang), ob.tz*Math.cos(ang), randRange(0.16, 0.26), -ob.tz, 0.05, ob.tx, 1, colL, colS, 0, 0.78);
+      }
+    }
+  }
+  const worldGPU = worldBatch.upload();
+
+  // 7E. River Water Surface (Animated ripples + live FBO reflection)
+  setLoadProgress(72, '正在鋪設河面倒影與瀑布水花…');
+  const riverCap = Math.round(38000 * strokeBudgetScale);
+  const riverBatch = new StrokeBatch(riverCap + 1000);
+  {
+    for (let i = 0; i < riverCap; i++) {
+      const rx = randRange(-76, 175);
+      const rzCenter = getRiverCenterZ(rx);
+      const hw = getRiverHalfWidth(rx);
+      const rz = rzCenter + (rand() - 0.5) * 2.0 * hw * 0.96;
+      const dx = 0.5;
+      const dz = getRiverCenterZ(rx + dx) - rzCenter;
+      const dl = Math.hypot(dx, dz) || 1;
+      riverBatch.push(rx, WATER_Y, rz, randRange(1.4, 2.8), 0, 1, 0, randRange(0.35, 0.65), dx/dl, 0, dz/dl, 5, [0.14, 0.34, 0.58], [0.05, 0.14, 0.30], 0, 0.65);
+    }
+  }
+  const riverGPU = riverBatch.upload();
+
+  // 7F. Waterfall & Pool Mist
+  const wfCap = Math.round(12000 * strokeBudgetScale);
+  const wfBatch = new StrokeBatch(wfCap + 500);
+  {
+    const streams = [-4.2, -1.4, 1.5, 4.1];
+    for (let i = 0; i < wfCap; i++) {
+      const isMist = rand() < 0.18;
+      if (isMist) {
+        const z = WATERFALL_POS.z + randRange(-8.5, 8.5);
+        const x = -71.5 + randRange(-2.5, 4.0);
+        wfBatch.push(x, WATER_Y + 0.5, z, randRange(0.9, 1.7), 0.7, 0.6, 0.2, randRange(0.45, 0.85), 1, 0.3, 0, 4, [0.58, 0.78, 0.92], [0.18, 0.38, 0.62], 0.08, 0.45);
+      } else {
+        const streamOff = streams[i % streams.length];
+        const z = WATERFALL_POS.z + streamOff + randRange(-1.25, 1.25);
+        const isFoam = rand() < 0.42;
+        const colL = isFoam ? [0.68, 0.86, 0.98] : [0.28, 0.54, 0.82];
+        const colS = [0.10, 0.24, 0.48];
+        wfBatch.push(-76.2 + randRange(-1.0, 1.0), 10.0, z, randRange(1.6, 3.0), 0.96, 0.24, 0, randRange(0.18, 0.36), 0.18, -1.0, 0, 4, colL, colS, isFoam ? 0.06 : 0.0, 0.75);
+      }
+    }
+  }
+  const wfGPU = wfBatch.upload();
+
+  // 7G. Windmill Sails (Local to WINDMILL_HUB, rotated via uModel)
+  const sailsCap = Math.round(5500 * strokeBudgetScale);
+  const sailsBatch = new StrokeBatch(sailsCap + 500);
+  {
+    for (let arm = 0; arm < 4; arm++) {
+      const a = (arm / 4) * Math.PI * 2;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      // Main wooden spar
+      const nSpar = Math.round(280 * strokeBudgetScale);
+      for (let i = 0; i < nSpar; i++) {
+        const r = randRange(0.3, 7.6);
+        const lx = ca * r + sa * randRange(-0.14, 0.14);
+        const ly = sa * r - ca * randRange(-0.14, 0.14);
+        const lz = randRange(-0.12, 0.12);
+        sailsBatch.push(lx, ly, lz, randRange(0.45, 0.85), 0, 0, 1, randRange(0.14, 0.24), ca, sa, 0, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 0, 0.75);
+      }
+      // Lattice canvas slats
+      const nCanvas = Math.round(1050 * strokeBudgetScale);
+      for (let i = 0; i < nCanvas; i++) {
+        const r = randRange(1.4, 7.4);
+        const wOff = randRange(0.16, 1.45);
+        // Grid crossbars + canvas texture
+        const lx = ca * r - sa * wOff;
+        const ly = sa * r + ca * wOff;
+        const lz = 0.06;
+        const isWoodBar = (Math.abs((r % 0.85) - 0.42) < 0.07) || wOff > 1.34;
+        const colL = isWoodBar ? [0.48, 0.32, 0.20] : [0.76, 0.74, 0.68];
+        const colS = isWoodBar ? [0.16, 0.12, 0.14] : [0.26, 0.32, 0.44];
+        sailsBatch.push(lx, ly, lz, randRange(0.45, 0.80), 0, 0, 1, randRange(0.16, 0.28), isWoodBar ? -sa : ca, isWoodBar ? ca : sa, 0, 1, colL, colS, 0, 0.72);
+      }
+    }
+  }
+  const sailsGPU = sailsBatch.upload();
+
+  // 7H. Real-time Camera-Centered Toroidal Fine Grass
+  const GRASS_SPAN = 52.0;
+  const grassCap = Math.round(52000 * strokeBudgetScale);
+  const grassBatch = new StrokeBatch(grassCap + 200);
+  {
+    for (let i = 0; i < grassCap; i++) {
+      // Slightly denser near center of toroidal cell
+      const gx = (rand() - 0.5) * GRASS_SPAN;
+      const gz = (rand() - 0.5) * GRASS_SPAN;
+      const h = randRange(0.28, 0.62);
+      const colL = [randRange(0.22, 0.34), randRange(0.40, 0.56), randRange(0.18, 0.28)];
+      const colS = [0.06, 0.14, 0.16];
+      grassBatch.push(gx, 0, gz, h, 0, 0.25, 0.96, randRange(0.045, 0.085), 0, 1, 0, 0, colL, colS, 0, 0.55);
+    }
+  }
+  const grassGPU = grassBatch.upload();
+
+  // 7I. Dynamic Articulated Horse & Knight Batch
+  const HERO_CAP = 7500;
+  const heroBatch = new StrokeBatch(HERO_CAP);
+  // Pre-seed deterministic slots for hero strokes so seeds don't flicker between frames!
+  const HERO_SEEDS = new Float32Array(HERO_CAP);
+  for (let i = 0; i < HERO_CAP; i++) HERO_SEEDS[i] = 0.002 + rand() * 0.995;
+  heroBatch.count = HERO_CAP;
+  const heroGPU = heroBatch.upload(gl.DYNAMIC_DRAW);
+
+  // Total active brushstrokes
+  const totalStrokes = skyGPU.count + mtnGPU.count + worldGPU.count + riverGPU.count + wfGPU.count + sailsGPU.count + grassGPU.count + 4800;
+  statStrokes.textContent = `${(totalStrokes / 1000).toFixed(0)}K 筆觸`;
+
+  // =========================================================================
+  // 8. River Reflection Offscreen Framebuffer (FBO)
+  // =========================================================================
+  const REFL_W = isMobile ? 256 : 384;
+  const REFL_H = isMobile ? 128 : 192;
+  const reflTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, reflTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, REFL_W, REFL_H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  const reflDepth = gl.createRenderbuffer();
+  gl.bindRenderbuffer(gl.RENDERBUFFER, reflDepth);
+  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, REFL_W, REFL_H);
+
+  const reflFBO = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, reflFBO);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, reflTex, 0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, reflDepth);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+  // =========================================================================
+  // 9. Physics Engine (Rapier3D WASM with Seamless Built-in Fallback)
+  // =========================================================================
+  const player = {
+    x: bridges[1].x - bridges[1].tx * 18,
+    y: 0,
+    z: bridges[1].z - bridges[1].tz * 18,
+    vx: 0, vy: 0, vz: 0,
+    yaw: Math.atan2(bridges[1].tx, bridges[1].tz),
+    speed: 0,
+    grounded: true,
+    pathS: ((bridges[1].s - 18) + totalPathLen) % totalPathLen,
+    gaitPhase: 0,
+    jumpTimer: 0,
+    lanternAngleX: 0, lanternVelX: 0,
+    lanternAngleZ: 0, lanternVelZ: 0,
+    lanternPos: [0, 0, 0]
+  };
+  player.y = getRideableHeight(player.x, player.z);
+
+  let physicsMode = 'builtin';
+  let rapierWorld = null;
+  let rapierBody = null;
+  let rapierCtrl = null;
+  let rapierCollider = null;
+  let RAPIER_REF = null;
+
+  async function initPhysics() {
+    if (forceBuiltinPhysics) {
+      statPhysics.textContent = '內建物理';
+      return;
+    }
+    try {
+      setLoadProgress(84, '正在載入 Rapier3D 物理引擎…');
+      const loadPromise = import('https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.12.0/rapier.es.js');
+      const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4500));
+      const mod = await Promise.race([loadPromise, timeoutPromise]);
+      const RAPIER = mod.default || mod;
+      await RAPIER.init();
+      RAPIER_REF = RAPIER;
+
+      rapierWorld = new RAPIER.World({ x: 0, y: -24.0, z: 0 });
+
+      // Build terrain heightfield collider (128x128 grid over [-160, 160])
+      const nr = 128, nc = 128;
+      const hfSpan = 320.0;
+      const heights = new Float32Array((nr + 1) * (nc + 1));
+      for (let col = 0; col <= nc; col++) {
+        const x = ((col / nc) - 0.5) * hfSpan;
+        for (let row = 0; row <= nr; row++) {
+          const z = ((row / nr) - 0.5) * hfSpan;
+          heights[col * (nr + 1) + row] = getRideableHeight(x, z);
+        }
+      }
+      const hfDesc = RAPIER.ColliderDesc.heightfield(nr, nc, heights, { x: hfSpan, y: 1.0, z: hfSpan });
+      rapierWorld.createCollider(hfDesc);
+
+      // Obstacle colliders (fences, stone walls, fallen logs)
+      for (const ob of obstacles) {
+        const qy = Math.sin(ob.yaw * 0.5), qw = Math.cos(ob.yaw * 0.5);
+        const colDesc = RAPIER.ColliderDesc.cuboid(ob.halfWidth, ob.height * 0.5, ob.halfDepth)
+          .setTranslation(ob.x, ob.y + ob.height * 0.5, ob.z)
+          .setRotation({ x: 0, y: qy, z: 0, w: qw });
+        rapierWorld.createCollider(colDesc);
+      }
+
+      // Solid building colliders
+      const buildingBox = (bx, bz, hx, hy, hz, yaw = 0) => {
+        const by = getRawTerrainHeight(bx, bz);
+        const qy = Math.sin(yaw * 0.5), qw = Math.cos(yaw * 0.5);
+        rapierWorld.createCollider(
+          RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+            .setTranslation(bx, by + hy, bz)
+            .setRotation({ x: 0, y: qy, z: 0, w: qw })
+        );
+      };
+      buildingBox(COTTAGE_POS.x, COTTAGE_POS.z, 3.2, 2.5, 2.5, 0.48);
+      buildingBox(WINDMILL_POS.x, WINDMILL_POS.z, 3.3, 5.0, 3.3, 0);
+      buildingBox(CHURCH_POS.x, CHURCH_POS.z, 4.0, 6.0, 6.2, 0.15);
+      for (const vh of VILLAGE_HOUSES) buildingBox(vh.x, vh.z, vh.w * 0.5, vh.h * 0.5, vh.d * 0.5, vh.yaw);
+
+      // Kinematic horse rider capsule + CharacterController
+      const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(player.x, player.y + 0.95, player.z);
+      rapierBody = rapierWorld.createRigidBody(bodyDesc);
+      rapierCollider = rapierWorld.createCollider(RAPIER.ColliderDesc.capsule(0.45, 0.50), rapierBody);
+      rapierCtrl = rapierWorld.createCharacterController(0.08);
+      rapierCtrl.setMaxSlopeClimbAngle(52 * Math.PI / 180);
+      rapierCtrl.setMinSlopeSlideAngle(55 * Math.PI / 180);
+      rapierCtrl.enableSnapToGround(0.35);
+
+      physicsMode = 'rapier';
+      statPhysics.textContent = 'Rapier3D 物理';
+    } catch (err) {
+      console.warn('Rapier failed to load, falling back to built-in physics:', err);
+      physicsMode = 'builtin';
+      statPhysics.textContent = '內建物理';
+    }
+  }
+
+  function stepPhysics(dt, moveDirX, moveDirZ, targetSpeed, wantJump) {
+    const accel = 16.0;
+    player.vx = mix(player.vx, moveDirX * targetSpeed, clamp(dt * accel, 0, 1));
+    player.vz = mix(player.vz, moveDirZ * targetSpeed, clamp(dt * accel, 0, 1));
+
+    if (wantJump && player.grounded) {
+      player.vy = 10.6;
+      player.grounded = false;
+      player.jumpTimer = 0.01;
+    }
+    player.vy -= 24.0 * dt;
+
+    if (physicsMode === 'rapier' && rapierCtrl && rapierBody) {
+      if (player.vy > 0.05 || !player.grounded) {
+        rapierCtrl.disableSnapToGround();
+      } else {
+        rapierCtrl.enableSnapToGround(0.35);
+      }
+      const desired = { x: player.vx * dt, y: player.vy * dt, z: player.vz * dt };
+      rapierCtrl.computeColliderMovement(rapierCollider, desired);
+      const corr = rapierCtrl.computedMovement();
+      const pos = rapierBody.translation();
+      const nx = clamp(pos.x + corr.x, -148, 148);
+      const ny = pos.y + corr.y;
+      const nz = clamp(pos.z + corr.z, -148, 148);
+      rapierBody.setNextKinematicTranslation({ x: nx, y: ny, z: nz });
+      rapierWorld.step();
+
+      player.x = nx;
+      player.z = nz;
+      const exactGround = getRideableHeight(player.x, player.z);
+      const footY = ny - 0.95;
+      if (player.vy <= 0.1 && rapierCtrl.computedGrounded()) {
+        player.grounded = true;
+        player.vy = 0;
+        player.y = Math.max(footY, exactGround);
+      } else if (footY <= exactGround + 0.02 && player.vy <= 0) {
+        player.grounded = true;
+        player.vy = 0;
+        player.y = exactGround;
+        rapierBody.setNextKinematicTranslation({ x: player.x, y: exactGround + 0.95, z: player.z });
+      } else {
+        player.grounded = false;
+        player.y = footY;
+      }
+    } else {
+      // Built-in fallback physics
+      let nx = clamp(player.x + player.vx * dt, -148, 148);
+      let nz = clamp(player.z + player.vz * dt, -148, 148);
+      let ny = player.y + player.vy * dt;
+
+      // Obstacle AABB/OBB collision (can jump cleanly over!)
+      const horseRad = 0.58;
+      for (const ob of obstacles) {
+        const dx = nx - ob.x, dz = nz - ob.z;
+        const c = Math.cos(-ob.yaw), s = Math.sin(-ob.yaw);
+        const lx = dx * c + dz * s;
+        const lz = -dx * s + dz * c;
+        const ex = ob.halfWidth + horseRad, ez = ob.halfDepth + horseRad;
+        if (Math.abs(lx) < ex && Math.abs(lz) < ez) {
+          const topY = ob.y + ob.height;
+          if (ny >= topY - 0.18) {
+            // Land on or clear above obstacle
+            if (ny < topY && player.vy <= 0) { ny = topY; player.vy = 0; player.grounded = true; }
+          } else {
+            // Push horizontally out of obstacle
+            const penX = ex - Math.abs(lx);
+            const penZ = ez - Math.abs(lz);
+            let plx = lx, plz = lz;
+            if (penX < penZ) plx = Math.sign(lx || 1) * ex;
+            else plz = Math.sign(lz || 1) * ez;
+            const cw = Math.cos(ob.yaw), sw = Math.sin(ob.yaw);
+            nx = ob.x + plx * cw + plz * sw;
+            nz = ob.z - plx * sw + plz * cw;
+          }
+        }
+      }
+
+      // Building cylinder push-out
+      const pushCircle = (bx, bz, rad) => {
+        const dx = nx - bx, dz = nz - bz;
+        const d = Math.hypot(dx, dz);
+        if (d < rad && d > 1e-4) {
+          nx = bx + (dx / d) * rad;
+          nz = bz + (dz / d) * rad;
+        }
+      };
+      pushCircle(COTTAGE_POS.x, COTTAGE_POS.z, 4.2);
+      pushCircle(WINDMILL_POS.x, WINDMILL_POS.z, 4.0);
+      pushCircle(CHURCH_POS.x, CHURCH_POS.z, 6.2);
+      for (const vh of VILLAGE_HOUSES) pushCircle(vh.x, vh.z, 3.6);
+
+      // Keep out of deep river unless on bridge or jumping
+      const gY = getRideableHeight(nx, nz);
+      if (ny <= gY) {
+        ny = gY;
+        player.vy = 0;
+        player.grounded = true;
+      } else {
+        player.grounded = false;
+      }
+
+      player.x = nx; player.y = ny; player.z = nz;
+    }
+
+    // Prevent sinking into deep river water if player walks off bridge
+    if (getBridgeAt(player.x, player.z) === null && player.y < WATER_Y - 0.25) {
+      player.y = WATER_Y - 0.25;
+      if (player.vy < 0) player.vy = 0;
+      player.grounded = true;
+    }
+
+    player.speed = Math.hypot(player.vx, player.vz);
+    if (player.speed > 0.25) {
+      const targetYaw = Math.atan2(player.vx, player.vz);
+      let diff = targetYaw - player.yaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      player.yaw += diff * clamp(dt * 8.5, 0, 1);
+    }
+    if (!player.grounded) player.jumpTimer += dt;
+    else player.jumpTimer = 0;
+  }
+
+  // =========================================================================
+  // 10. Articulated Horse, Saddle, Reins, Knight, Cloak, Hat & Lantern Builder
+  // =========================================================================
+  function buildHeroStrokes(time) {
+    let idx = 0;
+    const pushHero = (wx, wy, wz, len, nx, ny, nz, wid, tx, ty, tz, matType, colL, colS, emissive = 0) => {
+      if (idx >= HERO_CAP) return;
+      const i4 = idx * 4;
+      heroBatch.posLen[i4] = wx; heroBatch.posLen[i4+1] = wy; heroBatch.posLen[i4+2] = wz; heroBatch.posLen[i4+3] = len;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      heroBatch.normWid[i4] = nx/nl; heroBatch.normWid[i4+1] = ny/nl; heroBatch.normWid[i4+2] = nz/nl; heroBatch.normWid[i4+3] = wid;
+      const tl = Math.hypot(tx, ty, tz) || 1;
+      heroBatch.tanMeta[i4] = tx/tl; heroBatch.tanMeta[i4+1] = ty/tl; heroBatch.tanMeta[i4+2] = tz/tl;
+      heroBatch.tanMeta[i4+3] = matType + HERO_SEEDS[idx];
+      heroBatch.colLit[i4] = clamp((colL[0]*255)|0, 0, 255);
+      heroBatch.colLit[i4+1] = clamp((colL[1]*255)|0, 0, 255);
+      heroBatch.colLit[i4+2] = clamp((colL[2]*255)|0, 0, 255);
+      heroBatch.colLit[i4+3] = clamp((emissive*255)|0, 0, 255);
+      heroBatch.colShd[i4] = clamp((colS[0]*255)|0, 0, 255);
+      heroBatch.colShd[i4+1] = clamp((colS[1]*255)|0, 0, 255);
+      heroBatch.colShd[i4+2] = clamp((colS[2]*255)|0, 0, 255);
+      heroBatch.colShd[i4+3] = 185;
+      idx++;
+    };
+
+    const sp = player.speed;
+    const isGallop = sp > 10.5;
+    const isMove = sp > 0.35;
+    const strideFreq = isGallop ? 10.5 : (isMove ? 5.8 : 1.5);
+    const amp = !player.grounded ? 0.65 : (isGallop ? 0.85 : (isMove ? 0.50 : 0.03));
+
+    const bodyBob = !player.grounded ? 0.06 : Math.sin(player.gaitPhase * 2.0) * (isGallop ? 0.11 : (isMove ? 0.05 : 0.015));
+    const bodyPitch = !player.grounded ? clamp(-player.vy * 0.04, -0.35, 0.35)
+                    : Math.cos(player.gaitPhase * 2.0) * (isGallop ? 0.12 : 0.02);
+
+    const cy = Math.cos(player.yaw), sy = Math.sin(player.yaw);
+    const cp = Math.cos(bodyPitch), spP = Math.sin(bodyPitch);
+
+    // Local horse space -> world space transform
+    const toWorld = (lx, ly, lz) => {
+      // Pitch around X, then yaw around Y
+      const py = ly * cp - lz * spP;
+      const pz = ly * spP + lz * cp;
+      return [
+        player.x + lx * cy + pz * sy,
+        player.y + 1.02 + bodyBob + py,
+        player.z - lx * sy + pz * cy
+      ];
+    };
+    const dirToWorld = (lx, ly, lz) => {
+      const py = ly * cp - lz * spP;
+      const pz = ly * spP + lz * cp;
+      return [lx * cy + pz * sy, py, -lx * sy + pz * cy];
+    };
+
+    // Palettes
+    const horseL = [0.54, 0.30, 0.15], horseS = [0.22, 0.11, 0.06];
+    const maneL  = [0.16, 0.10, 0.07], maneS  = [0.06, 0.04, 0.04];
+    const sadL   = [0.34, 0.16, 0.09], sadS   = [0.14, 0.07, 0.05];
+    const cloakL = [0.16, 0.36, 0.78], cloakS = [0.06, 0.14, 0.36];
+    const hatL   = [0.18, 0.22, 0.34], hatS   = [0.07, 0.09, 0.16];
+    const skinL  = [0.78, 0.60, 0.46], skinS  = [0.36, 0.25, 0.20];
+
+    // Helper: stroked capsule limb between local points A and B
+    const drawLimb = (ax, ay, az, bx, by, bz, rA, rB, nRings, nRingPts, colL, colS, strokeLen = 0.22, strokeWid = 0.11) => {
+      const dx = bx - ax, dy = by - ay, dz = bz - az;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const tx = dx/len, ty = dy/len, tz = dz/len;
+      const ref = Math.abs(ty) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+      const ux = ref[1]*tz - ref[2]*ty, uy = ref[2]*tx - ref[0]*tz, uz = ref[0]*ty - ref[1]*tx;
+      const ul = Math.hypot(ux, uy, uz) || 1;
+      const u = [ux/ul, uy/ul, uz/ul];
+      const v = cross3([tx, ty, tz], u);
+      for (let ri = 0; ri < nRings; ri++) {
+        const t = (ri + 0.5) / nRings;
+        const r = mix(rA, rB, t);
+        const cx = mix(ax, bx, t), cy0 = mix(ay, by, t), cz = mix(az, bz, t);
+        for (let pi = 0; pi < nRingPts; pi++) {
+          const ang = (pi / nRingPts) * Math.PI * 2 + ri * 0.5;
+          const ca = Math.cos(ang), sa = Math.sin(ang);
+          const lnx = u[0]*ca + v[0]*sa, lny = u[1]*ca + v[1]*sa, lnz = u[2]*ca + v[2]*sa;
+          const wp = toWorld(cx + lnx*r, cy0 + lny*r, cz + lnz*r);
+          const wn = dirToWorld(lnx, lny, lnz);
+          const wt = dirToWorld(tx, ty, tz);
+          pushHero(wp[0], wp[1], wp[2], strokeLen, wn[0], wn[1], wn[2], strokeWid, wt[0], wt[1], wt[2], 1, colL, colS);
+        }
+      }
+    };
+
+    // 1. Horse Torso, Chest & Hindquarters
+    drawLimb(0, -0.02, -0.68, 0, 0.04, 0.65, 0.34, 0.36, 14, 14, horseL, horseS, 0.32, 0.16);
+    // Chest & rump spherical caps
+    drawLimb(0, -0.05, 0.55, 0, 0.08, 0.85, 0.34, 0.24, 5, 10, horseL, horseS, 0.28, 0.14);
+    drawLimb(0, -0.05, -0.58, 0, -0.08, -0.84, 0.33, 0.20, 5, 10, horseL, horseS, 0.28, 0.14);
+
+    // 2. Horse Neck, Head, Ears & Flowing Mane
+    const headBob = Math.sin(player.gaitPhase + 0.5) * (isMove ? 0.06 : 0.02);
+    const neckTop = [0, 0.68 + headBob, 1.05];
+    drawLimb(0, 0.16, 0.62, neckTop[0], neckTop[1], neckTop[2], 0.24, 0.15, 7, 10, horseL, horseS, 0.26, 0.13);
+    // Head + Muzzle
+    const muzzle = [0, 0.42 + headBob, 1.48];
+    drawLimb(neckTop[0], neckTop[1] + 0.05, neckTop[2] - 0.04, muzzle[0], muzzle[1], muzzle[2], 0.16, 0.09, 6, 9, horseL, horseS, 0.22, 0.11);
+    // Ears
+    for (const sgn of [-1, 1]) {
+      drawLimb(sgn*0.08, neckTop[1]+0.12, neckTop[2]+0.02, sgn*0.10, neckTop[1]+0.28, neckTop[2]+0.04, 0.04, 0.015, 2, 4, horseL, horseS, 0.14, 0.06);
+    }
+    // Mane along neck crest
+    for (let m = 0; m < 10; m++) {
+      const mt = m / 9;
+      const mx = Math.sin(time * 4 + m) * 0.03 + 0.04;
+      const my = mix(0.30, neckTop[1] + 0.14, mt);
+      const mz = mix(0.60, neckTop[2] - 0.05, mt);
+      const wp = toWorld(mx, my, mz);
+      const wt = dirToWorld(0.2, 0.2, -1.0);
+      pushHero(wp[0], wp[1], wp[2], 0.26, 1, 0.4, 0, 0.09, wt[0], wt[1], wt[2], 1, maneL, maneS);
+    }
+
+    // 3. Flowing Tail
+    for (let t = 0; t < 8; t++) {
+      const tf = t / 7;
+      const swing = Math.sin(time * (isMove ? 6.5 : 2.2) - tf * 1.6) * (0.08 + sp * 0.012);
+      const wp = toWorld(swing, 0.02 - tf * 0.58, -0.84 - tf * (0.28 + sp * 0.025));
+      const wt = dirToWorld(swing*0.5, -0.85, -0.45);
+      pushHero(wp[0], wp[1], wp[2], 0.24, 0, 0.3, -1, 0.09, wt[0], wt[1], wt[2], 1, maneL, maneS);
+    }
+
+    // 4. Four Articulated Legs (4-beat gallop vs diagonal trot vs jump pose)
+    const legConfigs = [
+      { x:  0.19, z:  0.54, phase: 0.0,                           front: true  }, // FL
+      { x: -0.19, z:  0.54, phase: isGallop ? 1.45 : Math.PI,     front: true  }, // FR
+      { x:  0.19, z: -0.58, phase: isGallop ? 3.45 : Math.PI,     front: false }, // BL
+      { x: -0.19, z: -0.58, phase: isGallop ? 4.60 : 0.0,         front: false }  // BR
+    ];
+    for (const lg of legConfigs) {
+      const ph = player.gaitPhase + lg.phase;
+      let hipAng, kneeAng;
+      if (!player.grounded) {
+        // Graceful jump pose: forelegs tuck, hind legs sweep back/up
+        const jUp = clamp(player.vy * 0.09, -0.6, 0.8);
+        hipAng  = lg.front ? (0.55 + jUp * 0.5) : (-0.65 + jUp * 0.3);
+        kneeAng = lg.front ? (-1.25 - Math.max(0, jUp) * 0.4) : (0.55);
+      } else {
+        hipAng = Math.sin(ph) * amp;
+        const swing = Math.max(0, Math.cos(ph));
+        kneeAng = lg.front ? (-swing * amp * 1.35) : (swing * amp * 1.15);
+      }
+      const hip = [lg.x, -0.18, lg.z];
+      const L1 = 0.44, L2 = 0.44;
+      const knee = [
+        hip[0],
+        hip[1] - Math.cos(hipAng) * L1,
+        hip[2] + Math.sin(hipAng) * L1
+      ];
+      const lowerAng = hipAng + kneeAng;
+      const hoof = [
+        knee[0],
+        knee[1] - Math.cos(lowerAng) * L2,
+        knee[2] + Math.sin(lowerAng) * L2
+      ];
+      drawLimb(hip[0], hip[1], hip[2], knee[0], knee[1], knee[2], 0.11, 0.075, 4, 6, horseL, horseS, 0.22, 0.09);
+      drawLimb(knee[0], knee[1], knee[2], hoof[0], hoof[1], hoof[2], 0.072, 0.055, 4, 6, horseL, horseS, 0.22, 0.08);
+      drawLimb(hoof[0], hoof[1]+0.04, hoof[2], hoof[0], hoof[1]-0.05, hoof[2]+0.03, 0.065, 0.072, 2, 5, maneL, maneS, 0.12, 0.08);
+    }
+
+    // 5. Saddle & Stirrups
+    drawLimb(0, 0.34, -0.22, 0, 0.30, 0.22, 0.30, 0.29, 4, 8, sadL, sadS, 0.24, 0.14);
+    // Saddle pommel & cantle
+    drawLimb(-0.20, 0.42, -0.24, 0.20, 0.42, -0.24, 0.07, 0.07, 3, 5, sadL, sadS, 0.16, 0.09);
+    drawLimb(-0.18, 0.40,  0.24, 0.18, 0.40,  0.24, 0.07, 0.07, 3, 5, sadL, sadS, 0.16, 0.09);
+
+    // 6. Knight Torso, Legs, Wide-Brimmed Hat
+    const lean = isGallop ? 0.24 : (isMove ? 0.10 : 0.03);
+    const pelvis = [0, 0.42, -0.02];
+    const chest  = [0, 0.96, -0.02 + lean * 0.45];
+    const headC  = [0, 1.24,  0.02 + lean * 0.55];
+
+    // Rider legs gripping saddle
+    for (const sgn of [-1, 1]) {
+      drawLimb(sgn*0.20, 0.42, 0.02, sgn*0.32, 0.08, 0.14, 0.10, 0.08, 3, 5, cloakL, cloakS, 0.20, 0.10);
+      drawLimb(sgn*0.32, 0.08, 0.14, sgn*0.32, -0.24, 0.04, 0.075, 0.065, 3, 5, sadL, sadS, 0.20, 0.09);
+    }
+    // Torso
+    drawLimb(pelvis[0], pelvis[1], pelvis[2], chest[0], chest[1], chest[2], 0.19, 0.22, 6, 8, cloakL, cloakS, 0.24, 0.12);
+    // Head
+    drawLimb(chest[0], chest[1]+0.08, chest[2], headC[0], headC[1]+0.10, headC[2], 0.11, 0.11, 3, 6, skinL, skinS, 0.16, 0.09);
+
+    // Wide-Brimmed Hat (crown + wide circular brim)
+    const hatBase = [headC[0], headC[1] + 0.11, headC[2]];
+    drawLimb(hatBase[0], hatBase[1], hatBase[2], hatBase[0], hatBase[1]+0.15, hatBase[2]-0.01, 0.14, 0.10, 3, 8, hatL, hatS, 0.14, 0.08);
+    for (const ringR of [0.22, 0.35]) {
+      const nBrim = 24;
+      for (let b = 0; b < nBrim; b++) {
+        const a = (b / nBrim) * Math.PI * 2;
+        const wp = toWorld(hatBase[0] + Math.cos(a)*ringR, hatBase[1] - 0.01, hatBase[2] + Math.sin(a)*ringR);
+        const wn = dirToWorld(Math.cos(a)*0.12, 0.99, Math.sin(a)*0.12);
+        const wt = dirToWorld(-Math.sin(a), 0, Math.cos(a));
+        pushHero(wp[0], wp[1], wp[2], 0.18, wn[0], wn[1], wn[2], 0.16, wt[0], wt[1], wt[2], 1, hatL, hatS);
+      }
+    }
+
+    // 7. Dynamically Billowing Blue Cloak
+    const cloakRows = 9, cloakCols = 8;
+    const billow = clamp(sp * 0.055, 0.08, 0.78);
+    for (let r = 0; r < cloakRows; r++) {
+      const rt = r / (cloakRows - 1);
+      for (let cIdx = 0; cIdx < cloakCols; cIdx++) {
+        const ct = (cIdx / (cloakCols - 1)) - 0.5;
+        const w = mix(0.42, 0.88, rt);
+        const flutter = Math.sin(time * (4.0 + sp * 0.45) - rt * 3.8 + ct * 3.0) * (0.04 + rt * 0.12);
+        const lx = ct * w;
+        const ly = mix(chest[1] + 0.02, 0.10 + billow * 0.35, rt) + flutter;
+        const lz = mix(chest[2] - 0.16, -0.78 - billow * 0.95, rt) + Math.abs(ct) * 0.08;
+        const wp = toWorld(lx, ly, lz);
+        const wn = dirToWorld(ct * 0.4, 0.65, -0.65);
+        const wt = dirToWorld(0.1*ct, -0.65, -0.75);
+        pushHero(wp[0], wp[1], wp[2], 0.24, wn[0], wn[1], wn[2], 0.16, wt[0], wt[1], wt[2], 1, cloakL, cloakS);
+      }
+    }
+
+    // 8. Left Arm holding Reins + Right Arm holding Swinging Lantern
+    const lHand = [0.22, 0.70, 0.36];
+    drawLimb(0.22, chest[1], chest[2], lHand[0], lHand[1], lHand[2], 0.075, 0.055, 4, 5, cloakL, cloakS, 0.18, 0.08);
+
+    // Reins connecting horse bridle (near muzzle) to rider's left hand!
+    for (const sgn of [-1, 1]) {
+      const bridle = [sgn * 0.11, muzzle[1] + 0.05, muzzle[2] - 0.12];
+      const nRein = 7;
+      for (let ri = 0; ri < nRein; ri++) {
+        const t = ri / (nRein - 1);
+        const sag = Math.sin(t * Math.PI) * 0.10;
+        const rx = mix(bridle[0], lHand[0] - sgn * 0.03, t);
+        const ry = mix(bridle[1], lHand[1], t) - sag;
+        const rz = mix(bridle[2], lHand[2], t);
+        const wp = toWorld(rx, ry, rz);
+        const wt = dirToWorld(lHand[0]-bridle[0], lHand[1]-bridle[1], lHand[2]-bridle[2]);
+        pushHero(wp[0], wp[1], wp[2], 0.18, 0, 1, 0, 0.035, wt[0], wt[1], wt[2], 1, sadL, sadS);
+      }
+    }
+
+    // Right arm extended forward-right + swinging lantern
+    const rHand = [-0.36, 0.94, 0.46];
+    drawLimb(-0.22, chest[1], chest[2], rHand[0], rHand[1], rHand[2], 0.075, 0.055, 4, 5, cloakL, cloakS, 0.18, 0.08);
+    // Hanging lantern pendulum in world space
+    const handW = toWorld(rHand[0], rHand[1], rHand[2]);
+    const ropeLen = 0.42;
+    const lxOff = Math.sin(player.lanternAngleX) * ropeLen;
+    const lzOff = Math.sin(player.lanternAngleZ) * ropeLen;
+    const lyOff = -Math.sqrt(Math.max(0.05, ropeLen*ropeLen - lxOff*lxOff - lzOff*lzOff));
+    const lanW = [handW[0] + lxOff, handW[1] + lyOff, handW[2] + lzOff];
+    player.lanternPos = lanW;
+
+    // Lantern handle chain
+    for (let k = 0; k < 3; k++) {
+      const t = (k + 0.5) / 3;
+      pushHero(mix(handW[0], lanW[0], t), mix(handW[1], lanW[1] + 0.15, t), mix(handW[2], lanW[2], t), 0.12, 0, 0, 1, 0.03, 0, 1, 0, 1, [0.35, 0.28, 0.18], [0.15, 0.12, 0.10]);
+    }
+    // Glowing golden lantern core + brass frame (matType 8 = crisp world emissive)
+    for (let k = 0; k < 14; k++) {
+      const a = (k / 14) * Math.PI * 2;
+      const yOff = ((k % 3) - 1) * 0.038;
+      pushHero(lanW[0] + Math.cos(a)*0.08, lanW[1] + yOff, lanW[2] + Math.sin(a)*0.08, 0.16, Math.cos(a), 0, Math.sin(a), 0.11, 0, 1, 0, 8, [1.0, 0.88, 0.42], [1.0, 0.62, 0.14], 1.0);
+    }
+    // Lantern top/bottom caps
+    pushHero(lanW[0], lanW[1] + 0.13, lanW[2], 0.20, 0, 1, 0, 0.16, 1, 0, 0, 1, [0.35, 0.25, 0.14], [0.14, 0.10, 0.08]);
+    pushHero(lanW[0], lanW[1] - 0.13, lanW[2], 0.18, 0, -1, 0, 0.15, 1, 0, 0, 1, [0.35, 0.25, 0.14], [0.14, 0.10, 0.08]);
+
+    heroBatch.count = idx;
+    heroBatch.updateDynamic(heroGPU);
+  }
+
+  // =========================================================================
+  // 11. Camera, Controls (Desktop + Mobile Joystick/Pinch), Auto-Ride & Tour
+  // =========================================================================
+  let autoRide = true;
+  let tourMode = false;
+  let tourTime = 0;
+
+  const cam = {
+    yaw: player.yaw + 0.45,
+    pitch: 0.04,
+    dist: 10.8,
+    pos: [0, 5, 0],
+    target: [player.x, player.y + 2.35, player.z]
+  };
+
+  // Input state
+  const keys = Object.create(null);
+  let joyVecX = 0, joyVecY = 0; // [-1, 1]
+  let joySprint = false;
+  let touchJumpQueued = false;
+
+  window.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    if (e.code === 'KeyT') toggleTour();
+    if (['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
+      if (autoRide) setAutoRide(false);
+    }
+    if (e.code === 'Space') e.preventDefault();
+  });
+  window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+  // Desktop Mouse Orbit + Wheel Zoom
+  let draggingMouse = false, lastMX = 0, lastMY = 0;
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    draggingMouse = true;
+    lastMX = e.clientX; lastMY = e.clientY;
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!draggingMouse) return;
+    const dx = e.clientX - lastMX, dy = e.clientY - lastMY;
+    lastMX = e.clientX; lastMY = e.clientY;
+    cam.yaw -= dx * 0.0055;
+    cam.pitch = clamp(cam.pitch + dy * 0.0045, -0.35, 1.15);
+  });
+  window.addEventListener('mouseup', () => { draggingMouse = false; });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    cam.dist = clamp(cam.dist * (1 + e.deltaY * 0.001), 4.5, 42.0);
+  }, { passive: false });
+
+  // Mobile Virtual Joystick
+  let joyTouchId = null;
+  const JOY_MAX_R = 42;
+  function updateJoy(clientX, clientY) {
+    const rect = joystickZone.getBoundingClientRect();
+    const cx = rect.left + rect.width * 0.5;
+    const cy = rect.top + rect.height * 0.5;
+    let dx = clientX - cx, dy = clientY - cy;
+    const d = Math.hypot(dx, dy);
+    if (d > JOY_MAX_R) { dx = dx / d * JOY_MAX_R; dy = dy / d * JOY_MAX_R; }
+    joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+    joyVecX = dx / JOY_MAX_R;
+    joyVecY = dy / JOY_MAX_R;
+    joySprint = (d / JOY_MAX_R) > 0.78;
+    if (Math.hypot(joyVecX, joyVecY) > 0.12 && autoRide) setAutoRide(false);
+  }
+  joystickZone.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    touchControls.classList.add('visible');
+    const t = e.changedTouches[0];
+    joyTouchId = t.identifier;
+    updateJoy(t.clientX, t.clientY);
+  }, { passive: false });
+  window.addEventListener('touchmove', (e) => {
+    if (joyTouchId === null) return;
+    for (const t of e.changedTouches) {
+      if (t.identifier === joyTouchId) { updateJoy(t.clientX, t.clientY); break; }
+    }
+  }, { passive: false });
+  const endJoy = (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === joyTouchId) {
+        joyTouchId = null;
+        joyVecX = 0; joyVecY = 0; joySprint = false;
+        joystickKnob.style.transform = 'translate(0px, 0px)';
+      }
+    }
+  };
+  window.addEventListener('touchend', endJoy);
+  window.addEventListener('touchcancel', endJoy);
+
+  btnJumpTouch.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    touchJumpQueued = true;
+    btnJumpTouch.classList.add('pressed');
+    if (autoRide) setAutoRide(false);
+  }, { passive: false });
+  btnJumpTouch.addEventListener('touchend', () => btnJumpTouch.classList.remove('pressed'));
+
+  // Canvas Touch Orbit & Two-Finger Pinch Zoom
+  const camTouches = new Map();
+  let prevPinchDist = null;
+  canvas.addEventListener('touchstart', (e) => {
+    touchControls.classList.add('visible');
+    for (const t of e.changedTouches) camTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
+    if (camTouches.size === 2) {
+      const pts = [...camTouches.values()];
+      prevPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    }
+  }, { passive: true });
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (camTouches.size === 1) {
+      const t = e.changedTouches[0];
+      const prev = camTouches.get(t.identifier);
+      if (prev) {
+        cam.yaw -= (t.clientX - prev.x) * 0.0065;
+        cam.pitch = clamp(cam.pitch + (t.clientY - prev.y) * 0.005, -0.35, 1.15);
+        prev.x = t.clientX; prev.y = t.clientY;
+      }
+    } else if (camTouches.size >= 2) {
+      for (const t of e.changedTouches) {
+        const entry = camTouches.get(t.identifier);
+        if (entry) { entry.x = t.clientX; entry.y = t.clientY; }
+      }
+      const pts = [...camTouches.values()];
+      const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      if (prevPinchDist !== null && d > 10) {
+        cam.dist = clamp(cam.dist * (prevPinchDist / d), 4.5, 42.0);
+      }
+      prevPinchDist = d;
+    }
+  }, { passive: false });
+  const endCamTouch = (e) => {
+    for (const t of e.changedTouches) camTouches.delete(t.identifier);
+    if (camTouches.size < 2) prevPinchDist = null;
+  };
+  canvas.addEventListener('touchend', endCamTouch);
+  canvas.addEventListener('touchcancel', endCamTouch);
+
+  // HUD Button Handlers
+  function setAutoRide(v) {
+    autoRide = v;
+    btnAutoRide.classList.toggle('active', v);
+    btnAutoRide.textContent = v ? '自動騎行：開' : '自動騎行：關';
+  }
+  function toggleTour() {
+    tourMode = !tourMode;
+    btnTour.classList.toggle('active', tourMode);
+    btnTour.textContent = tourMode ? '全景巡遊：開' : '全景巡遊：關';
+  }
+  btnAutoRide.addEventListener('click', () => setAutoRide(!autoRide));
+  btnTour.addEventListener('click', toggleTour);
+  btnHelp.addEventListener('click', () => helpPanel.classList.toggle('open'));
+
+  // Panoramic Tour Keyframes (Catmull-Rom spline around valley)
+  const tourWaypoints = [
+    { eye: [-18, 12, 74],   target: [0, 8, 15] },       // Over sunflowers looking at valley & swirls
+    { eye: [-52, 18, -14],  target: [-82, 11, 10] },    // Waterfall & West Stone Bridge
+    { eye: [-34, 24, -56],  target: [15, 20, -90] },    // Towering Hero Cypress framing starry sky
+    { eye: [22, 17, -64],   target: [42, 10, -40] },    // Rotating Windmill & wheat field
+    { eye: [70, 14, -42],   target: [96, 13, -16] },    // Village & tall Church Steeple
+    { eye: [52, 8, 42],     target: [62, 3, 14] },      // East Stone Bridge & River reflections
+    { eye: [0, 42, 95],     target: [5, 22, -40] }      // Grand panoramic vista of 3 mountain layers & moon
+  ];
+  function catmullRom(p0, p1, p2, p3, t) {
+    const t2 = t * t, t3 = t2 * t;
+    return [0, 1, 2].map(i => 0.5 * (
+      (2 * p1[i]) + (-p0[i] + p2[i]) * t +
+      (2*p0[i] - 5*p1[i] + 4*p2[i] - p3[i]) * t2 +
+      (-p0[i] + 3*p1[i] - 3*p2[i] + p3[i]) * t3
+    ));
+  }
+
+  // =========================================================================
+  // 12. Adaptive Resolution Scaling & Main Render Loop
+  // =========================================================================
+  let renderScale = 1.0;
+  let fpsAvg = 60.0;
+  let frameCounter = 0;
+  let fpsCheckTimer = 0;
+
+  function resizeCanvas() {
+    // Use actual physical device pixels (especially crucial on mobile!)
+    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 3.0 : 2.0);
+    const w = Math.max(320, Math.round(window.innerWidth * dpr * renderScale));
+    const h = Math.max(200, Math.round(window.innerHeight * dpr * renderScale));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  function drawSolidMesh(mesh, view, proj, isSky) {
+    gl.useProgram(solidProg);
+    gl.uniformMatrix4fv(gl.getUniformLocation(solidProg, 'uView'), false, view);
+    gl.uniformMatrix4fv(gl.getUniformLocation(solidProg, 'uProj'), false, proj);
+    gl.uniform3fv(gl.getUniformLocation(solidProg, 'uCamPos'), cam.pos);
+    gl.uniform1i(gl.getUniformLocation(solidProg, 'uIsSky'), isSky ? 1 : 0);
+    gl.bindVertexArray(mesh.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, mesh.vertCount);
+  }
+
+  // Cache uniform locations for strokeProg
+  const uLoc = {};
+  for (const name of [
+    'uView','uProj','uModel','uUseModel','uCamPos','uViewport','uTime','uWaterY',
+    'uIsGrass','uGrassSpan','uTerrainTex','uTerrainWorldSpan',
+    'uMoonDir','uLanternPos','uWarmLights','uReflTex','uReflVP','uHasRefl'
+  ]) {
+    uLoc[name] = gl.getUniformLocation(strokeProg, name);
+  }
+  const warmLightsFlat = new Float32Array(8 * 4);
+  for (let i = 0; i < 8; i++) warmLightsFlat.set(warmLights[i], i * 4);
+
+  function bindCommonStrokeUniforms(view, proj, vpW, vpH, time, reflVP, hasRefl) {
+    gl.useProgram(strokeProg);
+    gl.uniformMatrix4fv(uLoc.uView, false, view);
+    gl.uniformMatrix4fv(uLoc.uProj, false, proj);
+    gl.uniformMatrix4fv(uLoc.uModel, false, mat4Identity());
+    gl.uniform1i(uLoc.uUseModel, 0);
+    gl.uniform3fv(uLoc.uCamPos, cam.pos);
+    gl.uniform2f(uLoc.uViewport, vpW, vpH);
+    gl.uniform1f(uLoc.uTime, time);
+    gl.uniform1f(uLoc.uWaterY, WATER_Y);
+    gl.uniform1i(uLoc.uIsGrass, 0);
+    gl.uniform1f(uLoc.uGrassSpan, GRASS_SPAN);
+    gl.uniform1f(uLoc.uTerrainWorldSpan, TERRAIN_WORLD_SPAN);
+    gl.uniform3fv(uLoc.uMoonDir, MOON_DIR);
+    gl.uniform3fv(uLoc.uLanternPos, player.lanternPos);
+    gl.uniform4fv(uLoc.uWarmLights, warmLightsFlat);
+    gl.uniformMatrix4fv(uLoc.uReflVP, false, reflVP);
+    gl.uniform1i(uLoc.uHasRefl, hasRefl ? 1 : 0);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, terrainTex);
+    gl.uniform1i(uLoc.uTerrainTex, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, reflTex);
+    gl.uniform1i(uLoc.uReflTex, 1);
+  }
+
+  function drawBatch(gpuObj) {
+    if (gpuObj.count <= 0) return;
+    gl.bindVertexArray(gpuObj.vao);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, gpuObj.count);
+  }
+
+  let lastTime = performance.now();
+  let simTime = 0;
+  let paused = urlParams.get('paused') === '1';
+  let camOverride = null;
+  let lastReflVP = mat4Identity();
+
+  function stepSim(dt, rawDt) {
+    simTime += dt;
+    const time = simTime;
+
+    if (rawDt > 0.001 && rawDt < 1.5) {
+      fpsAvg = mix(fpsAvg, 1.0 / rawDt, 0.14);
+    }
+    frameCounter++;
+    fpsCheckTimer += rawDt;
+    if (fpsCheckTimer >= 1.2) {
+      const targetLow = isMobile ? 30 : 42;
+      const targetHigh = isMobile ? 52 : 56;
+      if (fpsAvg < targetLow && renderScale > 0.50) {
+        renderScale = Math.max(0.50, +(renderScale - 0.12).toFixed(2));
+        resizeCanvas();
+      } else if (fpsAvg > targetHigh && renderScale < 1.0) {
+        renderScale = Math.min(1.0, +(renderScale + 0.08).toFixed(2));
+        resizeCanvas();
+      }
+      statFps.textContent = `${Math.round(fpsAvg)} FPS`;
+      statScale.textContent = `${Math.round(renderScale * 100)}%`;
+      fpsCheckTimer = 0;
+    }
+
+    let moveX = 0, moveZ = 0, targetSpeed = 0, wantJump = false;
+    let inFwd = 0, inRight = 0;
+    if (keys.KeyW || keys.ArrowUp)    inFwd += 1;
+    if (keys.KeyS || keys.ArrowDown)  inFwd -= 1;
+    if (keys.KeyD || keys.ArrowRight) inRight += 1;
+    if (keys.KeyA || keys.ArrowLeft)  inRight -= 1;
+
+    if (Math.hypot(joyVecX, joyVecY) > 0.12) {
+      inRight += joyVecX;
+      inFwd   -= joyVecY;
+    }
+
+    if (autoRide) {
+      const pNear = getPathInfo(player.x, player.z);
+      player.pathS = pNear.s;
+      const ahead = samplePathByS(player.pathS + 6.5);
+      const dx = ahead.x - player.x, dz = ahead.z - player.z;
+      const dl = Math.hypot(dx, dz) || 1;
+      moveX = dx / dl; moveZ = dz / dl;
+      targetSpeed = 8.8;
+
+      for (const ob of obstacles) {
+        let ds = ob.s - player.pathS;
+        if (ds < 0) ds += totalPathLen;
+        if (ds > 1.6 && ds < 5.0 && player.grounded) {
+          wantJump = true;
+          break;
+        }
+      }
+    } else {
+      const mag = Math.hypot(inFwd, inRight);
+      if (mag > 0.05) {
+        const fwdX = -Math.sin(cam.yaw), fwdZ = -Math.cos(cam.yaw);
+        const rgtX =  Math.cos(cam.yaw), rgtZ = -Math.sin(cam.yaw);
+        moveX = (fwdX * inFwd + rgtX * inRight) / mag;
+        moveZ = (fwdZ * inFwd + rgtZ * inRight) / mag;
+        const sprint = keys.ShiftLeft || keys.ShiftRight || joySprint;
+        targetSpeed = sprint ? 15.2 : 8.2;
+      }
+      if (keys.Space || touchJumpQueued) {
+        wantJump = true;
+        touchJumpQueued = false;
+      }
+    }
+
+    const prevVx = player.vx, prevVz = player.vz;
+    stepPhysics(dt, moveX, moveZ, targetSpeed, wantJump);
+
+    const strideRate = player.speed > 10.5 ? 10.5 : (player.speed > 0.35 ? 5.8 : 1.4);
+    player.gaitPhase += dt * strideRate;
+
+    const ax = clamp((player.vx - prevVx) / dt, -25, 25);
+    const az = clamp((player.vz - prevVz) / dt, -25, 25);
+    player.lanternVelX += (-18.0 * player.lanternAngleX - 3.6 * player.lanternVelX - ax * 0.032 + Math.sin(time * 2.4) * 0.25) * dt;
+    player.lanternVelZ += (-18.0 * player.lanternAngleZ - 3.6 * player.lanternVelZ - az * 0.032 + Math.cos(time * 1.9) * 0.25) * dt;
+    player.lanternAngleX = clamp(player.lanternAngleX + player.lanternVelX * dt, -0.6, 0.6);
+    player.lanternAngleZ = clamp(player.lanternAngleZ + player.lanternVelZ * dt, -0.6, 0.6);
+
+    if (camOverride) {
+      cam.pos = camOverride.pos;
+      cam.target = camOverride.target;
+    } else if (tourMode) {
+      tourTime += dt * 0.14;
+      const N = tourWaypoints.length;
+      const seg = Math.floor(tourTime) % N;
+      const f = tourTime - Math.floor(tourTime);
+      const w0 = tourWaypoints[(seg - 1 + N) % N];
+      const w1 = tourWaypoints[seg];
+      const w2 = tourWaypoints[(seg + 1) % N];
+      const w3 = tourWaypoints[(seg + 2) % N];
+      cam.pos = catmullRom(w0.eye, w1.eye, w2.eye, w3.eye, f);
+      cam.target = catmullRom(w0.target, w1.target, w2.target, w3.target, f);
+    } else {
+      if (autoRide && !draggingMouse && camTouches.size === 0) {
+        const desiredYaw = player.yaw + Math.PI + 0.32;
+        let diff = desiredYaw - cam.yaw;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        cam.yaw += diff * clamp(dt * 1.15, 0, 1);
+      }
+      const focusY = player.y + 2.35;
+      cam.target = [player.x, focusY, player.z];
+      const horiz = Math.cos(cam.pitch) * cam.dist;
+      let cx = player.x + Math.sin(cam.yaw) * horiz;
+      let cz = player.z + Math.cos(cam.yaw) * horiz;
+      let cy = focusY + Math.sin(cam.pitch) * cam.dist;
+      const groundAtCam = getRideableHeight(cx, cz) + 0.85;
+      if (cy < groundAtCam) cy = groundAtCam;
+      cam.pos = [cx, cy, cz];
+    }
+  }
+
+  function drawFrame() {
+    const time = simTime;
+    buildHeroStrokes(time);
+
+    const windmillRotMat = mat4RotateZ(mat4Translate(mat4Identity(), WINDMILL_HUB.x, WINDMILL_HUB.y, WINDMILL_HUB.z), time * 0.65);
+
+    // 4. Pass 0: Render River Reflection FBO (throttle slightly on very low FPS)
+    const updateRefl = (frameCounter === 1) || (fpsAvg >= 28) || (frameCounter % 3 === 0) || (camOverride !== null);
+    if (updateRefl) {
+      const reflEye = [cam.pos[0], 2 * WATER_Y - cam.pos[1], cam.pos[2]];
+      const reflTgt = [cam.target[0], 2 * WATER_Y - cam.target[1], cam.target[2]];
+      const reflView = mat4LookAt(reflEye, reflTgt, [0, 1, 0]);
+      const reflProj = mat4Perspective(52 * Math.PI / 180, canvas.width / canvas.height, 0.4, 1400);
+      lastReflVP = mat4Mul(reflProj, reflView);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, reflFBO);
+      gl.viewport(0, 0, REFL_W, REFL_H);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LESS);
+      gl.clearColor(0.03, 0.08, 0.22, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      const savedCamPos = cam.pos;
+      cam.pos = reflEye;
+      drawSolidMesh(skySolidMesh, reflView, reflProj, true);
+      gl.enable(gl.POLYGON_OFFSET_FILL);
+      gl.polygonOffset(2.0, 4.0);
+      for (const mm of mountainSolidMeshes) drawSolidMesh(mm, reflView, reflProj, false);
+      gl.disable(gl.POLYGON_OFFSET_FILL);
+
+      bindCommonStrokeUniforms(reflView, reflProj, REFL_W, REFL_H, time, lastReflVP, false);
+      drawBatch(skyGPU);
+      drawBatch(mtnGPU);
+      drawBatch(wfGPU);
+      drawBatch(heroGPU);
+      gl.uniformMatrix4fv(uLoc.uModel, false, windmillRotMat);
+      gl.uniform1i(uLoc.uUseModel, 1);
+      drawBatch(sailsGPU);
+      gl.uniform1i(uLoc.uUseModel, 0);
+      cam.pos = savedCamPos;
+    }
+
+    // 5. Pass 1: Main Scene Rendering
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LESS);
+    gl.clearColor(0.03, 0.08, 0.22, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    const view = mat4LookAt(cam.pos, cam.target, [0, 1, 0]);
+    const proj = mat4Perspective(52 * Math.PI / 180, canvas.width / canvas.height, 0.35, 1400);
+
+    drawSolidMesh(skySolidMesh, view, proj, true);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(2.0, 4.0);
+    for (const mm of mountainSolidMeshes) drawSolidMesh(mm, view, proj, false);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+
+    bindCommonStrokeUniforms(view, proj, canvas.width, canvas.height, time, lastReflVP, true);
+    drawBatch(skyGPU);
+    drawBatch(mtnGPU);
+    drawBatch(worldGPU);
+    drawBatch(riverGPU);
+    drawBatch(wfGPU);
+    drawBatch(heroGPU);
+
+    gl.uniformMatrix4fv(uLoc.uModel, false, windmillRotMat);
+    gl.uniform1i(uLoc.uUseModel, 1);
+    drawBatch(sailsGPU);
+    gl.uniform1i(uLoc.uUseModel, 0);
+
+    gl.uniform1i(uLoc.uIsGrass, 1);
+    drawBatch(grassGPU);
+    gl.uniform1i(uLoc.uIsGrass, 0);
+  }
+
+  function renderOneFrame(dt, rawDt) {
+    stepSim(dt, rawDt);
+    drawFrame();
+  }
+
+  function frame(now) {
+    const rawDt = (now - lastTime) * 0.001;
+    lastTime = now;
+    if (!paused) {
+      const dt = clamp(rawDt, 0.001, 0.05);
+      renderOneFrame(dt, rawDt);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // Expose minimal debug state for automated verification without cluttering UI
+  window.__STARRY_DEBUG__ = {
+    get state() {
+      return {
+        physicsMode,
+        autoRide,
+        tourMode,
+        totalStrokes,
+        renderScale,
+        fps: Math.round(fpsAvg),
+        player: { x: player.x, y: player.y, z: player.z, grounded: player.grounded, speed: player.speed, yaw: player.yaw, pathS: player.pathS },
+        cam: { pos: cam.pos, target: cam.target, dist: cam.dist },
+        obstacles: obstacles.map(o => ({ type: o.type, x: o.x, y: o.y, z: o.z, s: o.s })),
+        bridges: bridges.map(b => ({ x: b.x, z: b.z, s: b.s }))
+      };
+    },
+    setPaused(v) { paused = !!v; },
+    stepAndRender(dt = 0.016, steps = 1, rawDtOverride = null) {
+      const rdt = rawDtOverride !== null ? rawDtOverride : dt;
+      for (let i = 0; i < steps; i++) stepSim(dt, rdt);
+      drawFrame();
+    },
+    setView(eye, target) {
+      tourMode = false;
+      camOverride = eye ? { pos: eye, target } : null;
+    },
+    setTour(on) {
+      camOverride = null;
+      tourMode = !!on;
+      btnTour.classList.toggle('active', tourMode);
+      btnTour.textContent = tourMode ? '全景巡遊：開' : '全景巡遊：關';
+    },
+    warpNearObstacle(idx = 0) {
+      const ob = obstacles[idx % obstacles.length];
+      const back = samplePathByS(ob.s - 6.0);
+      player.x = back.x; player.z = back.z;
+      player.y = getRideableHeight(back.x, back.z);
+      player.yaw = Math.atan2(back.tx, back.tz);
+      player.vx = back.tx * 8.8; player.vz = back.tz * 8.8; player.vy = 0;
+      player.grounded = true;
+      player.pathS = back.s;
+      if (rapierBody) {
+        rapierBody.setTranslation({ x: player.x, y: player.y + 0.95, z: player.z }, true);
+        rapierBody.setNextKinematicTranslation({ x: player.x, y: player.y + 0.95, z: player.z });
+      }
+    }
+  };
+
+  initPhysics().then(() => {
+    setLoadProgress(100, '完成！');
+    loaderOverlay.classList.add('hidden');
+    setTimeout(() => { loaderOverlay.style.display = 'none'; }, 580);
+    if (!paused) renderOneFrame(0.016, 0.016);
+    requestAnimationFrame(frame);
+  });
+})();
+</script>
+</body>
+</html>
