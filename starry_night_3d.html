@@ -188,6 +188,8 @@
       <span id="statStrokes">-- 筆觸</span>
       <span class="stats-dot">·</span>
       <span id="statPhysics">物理載入中</span>
+      <span class="stats-dot">·</span>
+      <span id="statRegion">心谷小徑 (0, 0)</span>
     </div>
   </div>
 
@@ -257,6 +259,7 @@
   const statScale = document.getElementById('statScale');
   const statStrokes = document.getElementById('statStrokes');
   const statPhysics = document.getElementById('statPhysics');
+  const statRegion = document.getElementById('statRegion');
   const btnAutoRide = document.getElementById('btnAutoRide');
   const btnTour = document.getElementById('btnTour');
   const btnHelp = document.getElementById('btnHelp');
@@ -374,12 +377,13 @@
   }
 
   // =========================================================================
-  // 2. World Layout, Path, River, Bridges, Landmarks & Terrain Math
+  // 2. Open-World Layout (~2048m x 2048m), River & Lake, Bridges, Roads & Terrain
   // =========================================================================
+  const WORLD_BOUND = 860.0;
   const WATER_Y = -1.2;
   const MOON_DIR = norm3(0.54, 0.40, -0.74);
 
-  // Circular riding path spline
+  // Central Circular Scenic Auto-Ride Loop
   const PATH_N = 512;
   const pathPts = [];
   let totalPathLen = 0;
@@ -426,13 +430,13 @@
 
   function getPathInfo(x, z) {
     let bestD2 = 1e9, bestIdx = 0;
-    for (let i = 0; i < PATH_N; i += 4) {
+    for (let i = 0; i < PATH_N; i += 8) {
       const p = pathPts[i];
       const d2 = (x - p.x) ** 2 + (z - p.z) ** 2;
       if (d2 < bestD2) { bestD2 = d2; bestIdx = i; }
     }
     let refineIdx = bestIdx;
-    for (let k = -6; k <= 6; k++) {
+    for (let k = -8; k <= 8; k++) {
       const idx = (bestIdx + k + PATH_N) % PATH_N;
       const p = pathPts[idx];
       const d2 = (x - p.x) ** 2 + (z - p.z) ** 2;
@@ -442,34 +446,90 @@
     return { dist: Math.sqrt(bestD2), s: p.s, tx: p.tx, tz: p.tz, nx: p.x, nz: p.z };
   }
 
-  // River centerline Z(x) from waterfall pool (-74, 10) eastward through valley
+  // Long Open-World Cross-Country Roads (polylines)
+  const extraRoadPolylines = [
+    // 1. North Cypress & Olive Grove Highway
+    [[6, -54], [-10, -110], [-42, -175], [-75, -245], [-92, -315], [-125, -420]],
+    // 2. East Village -> East Windmill -> Moonlit Lake -> Far East Plains
+    [[60, -6], [100, -16], [155, -75], [222, -162], [250, -70], [268, 45], [272, 118], [345, 114], [428, 122], [540, 145], [680, 175]],
+    // 3. South Grand Sunflower Plateau Road
+    [[-14, 54], [-22, 120], [-35, 195], [-46, 285], [-60, 385], [-85, 510]],
+    // 4. West Canyon Waterfall Overlook -> Watchtower Ruin Road
+    [[-64, 14], [-105, 18], [-120, 48], [-168, 95], [-235, 150], [-308, 202], [-420, 260]]
+  ];
+  // Dense sampled cross-country road segments for fast querying & rendering
+  const extraRoadSamples = [];
+  for (const poly of extraRoadPolylines) {
+    const pts = [];
+    for (let i = 0; i < poly.length - 1; i++) {
+      const [ax, az] = poly[i], [bx, bz] = poly[i + 1];
+      const segL = Math.hypot(bx - ax, bz - az);
+      const steps = Math.max(4, Math.ceil(segL / 4.0));
+      const tx = (bx - ax) / segL, tz = (bz - az) / segL;
+      for (let s = 0; s < steps; s++) {
+        const f = s / steps;
+        pts.push({ x: mix(ax, bx, f), z: mix(az, bz, f), tx, tz });
+      }
+    }
+    const last = poly[poly.length - 1];
+    const prev = poly[poly.length - 2];
+    const dl = Math.hypot(last[0] - prev[0], last[1] - prev[1]) || 1;
+    pts.push({ x: last[0], z: last[1], tx: (last[0]-prev[0])/dl, tz: (last[1]-prev[1])/dl });
+    extraRoadSamples.push(pts);
+  }
+
+  // Winding River from West Waterfall Gorge (-165) -> Heartland -> Moonlit Lake (310, 110) -> East (920)
   function getRiverCenterZ(x) {
-    return 10.0 + 11.0 * Math.sin(x * 0.032) + 4.0 * Math.cos(x * 0.017);
+    const lakePull = 95.0 * smoothstep(140, 310, x);
+    return 10.0 + lakePull + 14.0 * Math.sin(x * 0.024) + 7.0 * Math.cos(x * 0.011);
   }
   function getRiverHalfWidth(x) {
-    if (x < -76) return 0.0;
-    const pool = Math.exp(-((x + 68) ** 2) / 90) * 6.5;
-    return 6.8 + 1.8 * Math.sin(x * 0.05) + pool;
+    if (x < -168) return 0.0;
+    const wfPool = Math.exp(-((x + 156) ** 2) / 140) * 9.5;
+    const lakeSpread = Math.exp(-((x - 310) ** 2) / 4800) * 68.0;
+    return 7.2 + 2.0 * Math.sin(x * 0.04) + wfPool + lakeSpread;
   }
   function getRiverDistance(x, z) {
-    if (x < -78) {
-      return Math.hypot(x + 74, z - getRiverCenterZ(-74)) - 11.0;
+    if (x < -170) {
+      return Math.hypot(x + 162, z - getRiverCenterZ(-162)) - 14.0;
     }
     const rz = getRiverCenterZ(x);
     const hw = getRiverHalfWidth(x);
     return Math.abs(z - rz) - hw;
   }
 
-  // Village lane connecting East side of loop to the Village (x=92, z=-14)
-  function getVillageRoadDist(x, z) {
-    // Segment from (62, -6) to (102, -16)
-    const ax = 60, az = -6, bx = 104, bz = -16;
-    const dx = bx - ax, dz = bz - az;
-    const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
-    return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
-  }
+  // Landmark Locations across the Open World
+  const WINDMILL_POS = { x: 38, z: -42 };
+  const WINDMILL2_POS = { x: 230, z: -172 };
+  const COTTAGE_POS = { x: -24, z: 48 };
+  const CHURCH_POS = { x: 96, z: -18 };
+  const WATERFALL_POS = { x: -168, z: getRiverCenterZ(-162) };
+  const WATCHTOWER_POS = { x: -312, z: 204 };
+  const LAKE_POS = { x: 310, z: getRiverCenterZ(310) };
 
-  // Find the two crossings of the circular path with the river for Stone Bridges
+  const VILLAGE_HOUSES = [
+    { x: 84, z: -26, yaw: 0.25, w: 5.2, d: 4.2, h: 3.4 },
+    { x: 86, z: -5,  yaw: -0.18, w: 4.8, d: 3.8, h: 3.1 },
+    { x: 103, z: -28, yaw: 0.45, w: 5.5, d: 4.2, h: 3.6 },
+    { x: 108, z: -6, yaw: -0.35, w: 5.0, d: 4.0, h: 3.2 },
+    { x: 76, z: -18, yaw: 0.10, w: 4.4, d: 3.6, h: 2.9 },
+    { x: 94, z: 4, yaw: -0.5, w: 4.8, d: 3.9, h: 3.0 },
+    { x: 112, z: -19, yaw: 0.2, w: 5.6, d: 4.5, h: 3.7 },
+    { x: 90, z: -36, yaw: -0.1, w: 4.6, d: 3.7, h: 3.0 },
+    { x: 78, z: -34, yaw: 0.6, w: 4.5, d: 3.5, h: 2.8 },
+    { x: 106, z: -38, yaw: -0.4, w: 5.2, d: 4.1, h: 3.3 }
+  ];
+
+  // Lakeside Hamlet cottages on north shore of Moonlit Lake
+  const LAKE_HOUSES = [
+    { x: 256, z: 32, yaw: 0.15, w: 5.4, d: 4.2, h: 3.4 },
+    { x: 274, z: 26, yaw: -0.25, w: 5.0, d: 4.0, h: 3.2 },
+    { x: 292, z: 22, yaw: 0.35, w: 5.8, d: 4.4, h: 3.6 },
+    { x: 315, z: 24, yaw: -0.10, w: 4.8, d: 3.8, h: 3.0 },
+    { x: 242, z: 44, yaw: 0.50, w: 4.6, d: 3.6, h: 3.0 }
+  ];
+
+  // Four Arched Stone Bridges (2 on circular auto-ride loop + 2 on open-world roads)
   const bridges = [];
   {
     for (let side of [-1, 1]) {
@@ -483,16 +543,16 @@
       const p = pathPts[bestIdx];
       const hw = getRiverHalfWidth(p.x);
       bridges.push({
-        x: p.x,
-        z: p.z,
-        tx: p.tx,
-        tz: p.tz,
-        s: p.s,
-        halfLen: hw + 4.8,
-        halfWidth: 3.3,
-        archRise: 2.35
+        x: p.x, z: p.z, tx: p.tx, tz: p.tz, s: p.s,
+        halfLen: hw + 5.0, halfWidth: 3.4, archRise: 2.4
       });
     }
+    // Bridge 3: West Canyon Road Bridge near x = -112
+    const wx3 = -112, wz3 = getRiverCenterZ(wx3);
+    bridges.push({ x: wx3, z: wz3, tx: -0.22, tz: 0.975, s: -1, halfLen: getRiverHalfWidth(wx3) + 5.0, halfWidth: 3.3, archRise: 2.4 });
+    // Bridge 4: Lake East Road Bridge near x = 425
+    const wx4 = 425, wz4 = getRiverCenterZ(wx4);
+    bridges.push({ x: wx4, z: wz4, tx: 0.12, tz: 0.992, s: -1, halfLen: getRiverHalfWidth(wx4) + 5.5, halfWidth: 3.5, archRise: 2.7 });
   }
 
   function getBridgeAt(x, z) {
@@ -509,86 +569,77 @@
     return null;
   }
 
-  // Landmark locations
-  const WINDMILL_POS = { x: 38, z: -42 };
-  const COTTAGE_POS = { x: -24, z: 48 };
-  const CHURCH_POS = { x: 96, z: -18 };
-  const WATERFALL_POS = { x: -83, z: getRiverCenterZ(-74) };
-
-  const VILLAGE_HOUSES = [
-    { x: 84, z: -26, yaw: 0.25, w: 5.2, d: 4.2, h: 3.4 },
-    { x: 86, z: -5,  yaw: -0.18, w: 4.8, d: 3.8, h: 3.1 },
-    { x: 103, z: -28, yaw: 0.45, w: 5.5, d: 4.2, h: 3.6 },
-    { x: 108, z: -6, yaw: -0.35, w: 5.0, d: 4.0, h: 3.2 },
-    { x: 76, z: -18, yaw: 0.10, w: 4.4, d: 3.6, h: 2.9 },
-    { x: 94, z: 4, yaw: -0.5, w: 4.8, d: 3.9, h: 3.0 },
-    { x: 112, z: -19, yaw: 0.2, w: 5.6, d: 4.5, h: 3.7 },
-    { x: 90, z: -36, yaw: -0.1, w: 4.6, d: 3.7, h: 3.0 },
-    { x: 78, z: -34, yaw: 0.6, w: 4.5, d: 3.5, h: 2.8 },
-    { x: 106, z: -38, yaw: -0.4, w: 5.2, d: 4.1, h: 3.3 }
-  ];
-
-  // Raw terrain height (ground + riverbed + cliff + hills)
-  function getRawTerrainHeight(x, z) {
+  // Raw terrain height across entire 2048m x 2048m open world
+  function getRawTerrainHeight(x, z, skipPathFlatten = false) {
     const r = Math.hypot(x, z);
-    // Gentle valley rolling base
-    let h = 0.65
-          + 1.6 * Math.sin(x * 0.028 + 0.4) * Math.cos(z * 0.031 - 0.2)
-          + 0.9 * Math.sin(x * 0.065 - z * 0.052)
-          + 1.8 * (fbm2(x * 0.018 + 10.3, z * 0.018 + 4.7, 3) - 0.5);
+    // Multi-scale open-world rolling hills & plains
+    let h = 0.70
+          + 1.8 * Math.sin(x * 0.025 + 0.4) * Math.cos(z * 0.028 - 0.2)
+          + 1.0 * Math.sin(x * 0.062 - z * 0.050)
+          + 14.0 * (fbm2(x * 0.0045 + 10.3, z * 0.0045 + 4.7, 4) - 0.44) * smoothstep(90, 260, r)
+          + 3.2 * (fbm2(x * 0.016 + 2.1, z * 0.016 + 8.3, 3) - 0.48);
 
-    // Subtle bowl rising toward outer valley rim
-    if (r > 72) {
-      h += Math.pow((r - 72) * 0.038, 1.45) * 2.2;
+    // Gentle rising foothills near outer edges of playable open world (r > 520m)
+    if (r > 520) {
+      h += Math.pow((r - 520) * 0.014, 1.5) * 3.8;
     }
 
-    // Windmill knoll
+    // Windmill 1 & 2 knolls
     const dWind = Math.hypot(x - WINDMILL_POS.x, z - WINDMILL_POS.z);
     h += 4.6 * Math.exp(-(dWind * dWind) / 260.0);
+    const dWind2 = Math.hypot(x - WINDMILL2_POS.x, z - WINDMILL2_POS.z);
+    h += 6.5 * Math.exp(-(dWind2 * dWind2) / 520.0);
 
     // Cottage gentle rise
     const dCot = Math.hypot(x - COTTAGE_POS.x, z - COTTAGE_POS.z);
     h += 1.4 * Math.exp(-(dCot * dCot) / 180.0);
 
-    // Village plateau around y ~ 1.6
+    // Watchtower hilltop plateau
+    const dTow = Math.hypot(x - WATCHTOWER_POS.x, z - WATCHTOWER_POS.z);
+    h += 16.0 * Math.exp(-(dTow * dTow) / 1600.0);
+
+    // Heartland Village plateau
     const dVil = Math.hypot(x - 95, z + 15);
-    if (dVil < 35) {
-      const f = smoothstep(35, 14, dVil);
-      h = mix(h, 1.8, f * 0.85);
+    if (dVil < 35) h = mix(h, 1.8, smoothstep(35, 14, dVil) * 0.85);
+
+    // Lakeside Hamlet shore gentle terrace
+    const dHam = Math.hypot(x - 280, z - 28);
+    if (dHam < 48) h = mix(h, 1.4, smoothstep(48, 18, dHam) * 0.78);
+
+    // Flatten slightly along circular path
+    if (!skipPathFlatten && r < 110) {
+      const pInfo = getPathInfo(x, z);
+      if (pInfo.dist < 8.5) {
+        const pf = smoothstep(8.5, 2.8, pInfo.dist);
+        h = mix(h, Math.max(h * 0.55 + 0.35, 0.3), pf * 0.72);
+      }
     }
 
-    // Flatten slightly along circular path (except over water)
-    const pInfo = getPathInfo(x, z);
-    if (pInfo.dist < 8.5) {
-      const pf = smoothstep(8.5, 2.8, pInfo.dist);
-      h = mix(h, Math.max(h * 0.55 + 0.35, 0.3), pf * 0.72);
-    }
-
-    // Waterfall rocky cliff wall on the West (x < -72, centered near z = WATERFALL_POS.z)
+    // Grand West Waterfall Cliff Wall (x < -158, centered near WATERFALL_POS.z)
     const wfDz = Math.abs(z - WATERFALL_POS.z);
-    if (x < -72) {
-      const cliffStep = smoothstep(-74, -84, x);
-      const cliffWidth = smoothstep(38, 12, wfDz);
-      const crag = 3.2 * (fbm2(x * 0.12, z * 0.12, 3) - 0.3);
-      h += cliffStep * cliffWidth * (25.5 + crag);
+    if (x < -156) {
+      const cliffStep = smoothstep(-158, -172, x);
+      const cliffWidth = smoothstep(55, 16, wfDz);
+      const crag = 4.0 * (fbm2(x * 0.10, z * 0.10, 3) - 0.3);
+      h += cliffStep * cliffWidth * (30.5 + crag);
     }
 
-    // River channel carving
+    // River & Moonlit Lake channel carving
     const rDist = getRiverDistance(x, z);
-    if (rDist < 7.0) {
-      const carve = smoothstep(7.0, -2.5, rDist);
-      h = mix(h, WATER_Y - 2.4, carve);
+    if (rDist < 9.0) {
+      const carve = smoothstep(9.0, -3.5, rDist);
+      h = mix(h, WATER_Y - 2.6, carve);
     }
 
     return h;
   }
 
   function getTerrainNormal(x, z) {
-    const e = 0.6;
-    const hL = getRawTerrainHeight(x - e, z);
-    const hR = getRawTerrainHeight(x + e, z);
-    const hD = getRawTerrainHeight(x, z - e);
-    const hU = getRawTerrainHeight(x, z + e);
+    const e = 0.8;
+    const hL = getRawTerrainHeight(x - e, z, true);
+    const hR = getRawTerrainHeight(x + e, z, true);
+    const hD = getRawTerrainHeight(x, z - e, true);
+    const hU = getRawTerrainHeight(x, z + e, true);
     return norm3(hL - hR, 2 * e, hD - hU);
   }
 
@@ -599,77 +650,100 @@
     return h;
   }
 
-  // Obstacles along the circular path (fences, stone walls, fallen logs)
+  function getRegionName(x, z) {
+    if (Math.hypot(x - WATERFALL_POS.x - 25, z - WATERFALL_POS.z) < 55) return '西崖大瀑布';
+    if (Math.hypot(x - LAKE_POS.x, z - LAKE_POS.z) < 125) return '月光湖畔';
+    if (Math.hypot(x - CHURCH_POS.x, z - CHURCH_POS.z) < 42) return '教堂村莊';
+    if (Math.hypot(x - WINDMILL_POS.x, z - WINDMILL_POS.z) < 34) return '心谷風車麥田';
+    if (Math.hypot(x - WINDMILL2_POS.x, z - WINDMILL2_POS.z) < 75) return '東原風車麥海';
+    if (Math.hypot(x + 10, z - 36) < 32) return '向日葵花田';
+    if (Math.hypot(x + 48, z - 280) < 95) return '南方花海高地';
+    if (Math.hypot(x + 85, z + 275) < 110) return '北部柏樹橄欖谷';
+    if (Math.hypot(x - WATCHTOWER_POS.x, z - WATCHTOWER_POS.z) < 65) return '古塔遺跡高地';
+    if (Math.hypot(x, z) < 95) return '星夜心谷小徑';
+    return '開放星夜原野';
+  }
+
+  // 16 Jumpable Obstacles (6 on auto-ride circular loop + 10 along open-world roads)
   const obstacles = [];
   {
     const types = ['fence', 'stoneWall', 'fallenLog', 'fence', 'stoneWall', 'fallenLog'];
-    // Place 6 obstacles evenly distributed, skipping bridge & river zones
     let placed = 0;
     for (let k = 0; k < 28 && placed < 6; k++) {
       const sCandidate = ((k + 0.5) / 28) * totalPathLen;
       const pt = samplePathByS(sCandidate);
       let nearBridge = false;
-      for (const b of bridges) {
-        if (Math.hypot(pt.x - b.x, pt.z - b.z) < 20) nearBridge = true;
-      }
+      for (const b of bridges) if (Math.hypot(pt.x - b.x, pt.z - b.z) < 20) nearBridge = true;
       if (nearBridge || getRiverDistance(pt.x, pt.z) < 9) continue;
       if (obstacles.some(o => Math.hypot(o.x - pt.x, o.z - pt.z) < 34)) continue;
 
       const type = types[placed];
       const y = getRideableHeight(pt.x, pt.z);
-      const yaw = Math.atan2(pt.tx, pt.tz);
       obstacles.push({
-        id: placed,
-        type,
-        x: pt.x, y, z: pt.z,
-        s: pt.s,
-        tx: pt.tx, tz: pt.tz,
-        yaw,
-        halfWidth: 3.1,
-        halfDepth: type === 'fallenLog' ? 0.55 : 0.42,
-        height: type === 'fence' ? 1.15 : (type === 'stoneWall' ? 1.0 : 0.85)
+        id: obstacles.length, type, x: pt.x, y, z: pt.z, s: pt.s,
+        tx: pt.tx, tz: pt.tz, yaw: Math.atan2(pt.tx, pt.tz),
+        halfWidth: 3.1, halfDepth: type === 'fallenLog' ? 0.55 : 0.42,
+        height: type === 'fence' ? 1.15 : (type === 'stoneWall' ? 1.0 : 0.85),
+        onLoop: true
       });
       placed++;
+    }
+    // 10 extra obstacles on cross-country highways
+    const hwPicks = [
+      [0, 0.35], [0, 0.68],
+      [1, 0.25], [1, 0.48], [1, 0.78], [1, 0.90],
+      [2, 0.36], [2, 0.72],
+      [3, 0.42], [3, 0.75]
+    ];
+    for (let i = 0; i < hwPicks.length; i++) {
+      const [rIdx, frac] = hwPicks[i];
+      const arr = extraRoadSamples[rIdx];
+      const pt = arr[Math.min(arr.length - 1, Math.floor(frac * arr.length))];
+      if (getRiverDistance(pt.x, pt.z) < 10) continue;
+      const type = types[i % types.length];
+      const y = getRideableHeight(pt.x, pt.z);
+      obstacles.push({
+        id: obstacles.length, type, x: pt.x, y, z: pt.z, s: -1,
+        tx: pt.tx, tz: pt.tz, yaw: Math.atan2(pt.tx, pt.tz),
+        halfWidth: 3.3, halfDepth: type === 'fallenLog' ? 0.55 : 0.42,
+        height: type === 'fence' ? 1.15 : (type === 'stoneWall' ? 1.0 : 0.85),
+        onLoop: false
+      });
     }
   }
 
   // Warm point lights for shader (8 max)
   const warmLights = [
-    [COTTAGE_POS.x + 2.8, getRawTerrainHeight(COTTAGE_POS.x, COTTAGE_POS.z) + 2.4, COTTAGE_POS.z - 2.0, 22.0],
-    [WINDMILL_POS.x, getRawTerrainHeight(WINDMILL_POS.x, WINDMILL_POS.z) + 4.5, WINDMILL_POS.z + 3.5, 20.0],
-    [CHURCH_POS.x - 2.0, getRawTerrainHeight(CHURCH_POS.x, CHURCH_POS.z) + 7.5, CHURCH_POS.z, 32.0],
-    [85, 4.5, -16, 24.0],
-    [104, 4.5, -16, 24.0],
-    [92, 4.2, -31, 20.0],
-    [bridges[0].x, bridges[0].y || 2.5, bridges[0].z, 16.0],
-    [bridges[1].x, bridges[1].y || 2.5, bridges[1].z, 16.0]
+    [COTTAGE_POS.x + 2.8, getRawTerrainHeight(COTTAGE_POS.x, COTTAGE_POS.z) + 2.4, COTTAGE_POS.z - 2.0, 24.0],
+    [WINDMILL_POS.x, getRawTerrainHeight(WINDMILL_POS.x, WINDMILL_POS.z) + 4.5, WINDMILL_POS.z + 3.5, 22.0],
+    [CHURCH_POS.x - 2.0, getRawTerrainHeight(CHURCH_POS.x, CHURCH_POS.z) + 7.5, CHURCH_POS.z, 34.0],
+    [95, 4.5, -16, 28.0],
+    [WINDMILL2_POS.x, getRawTerrainHeight(WINDMILL2_POS.x, WINDMILL2_POS.z) + 5.0, WINDMILL2_POS.z + 3.5, 28.0],
+    [275, getRawTerrainHeight(275, 30) + 4.0, 28, 36.0],
+    [WATCHTOWER_POS.x, getRawTerrainHeight(WATCHTOWER_POS.x, WATCHTOWER_POS.z) + 9.0, WATCHTOWER_POS.z, 34.0],
+    [bridges[1].x, getRideableHeight(bridges[1].x, bridges[1].z) + 2.2, bridges[1].z, 18.0]
   ];
-  // Fill bridge y properly
-  warmLights[6][1] = getRideableHeight(bridges[0].x, bridges[0].z) + 2.2;
-  warmLights[7][1] = getRideableHeight(bridges[1].x, bridges[1].z) + 2.2;
 
   // =========================================================================
-  // 3. Mountain Layer Height Functions (3 Layers + Solid Silhouettes)
+  // 3. Distant Mountain Ranges (3 Layers + Solid Silhouettes at r = 950..1850m)
   // =========================================================================
   function getMountainRadius(layer, ang) {
-    if (layer === 0) return 155 + 14 * Math.sin(ang * 3 + 0.5) + 8 * Math.cos(ang * 5);
-    if (layer === 1) return 265 + 22 * Math.sin(ang * 2 - 0.8) + 12 * Math.cos(ang * 6);
-    return 470 + 35 * Math.sin(ang * 3 + 1.2) + 18 * Math.cos(ang * 5);
+    if (layer === 0) return 960 + 48 * Math.sin(ang * 3 + 0.5) + 26 * Math.cos(ang * 5);
+    if (layer === 1) return 1360 + 68 * Math.sin(ang * 2 - 0.8) + 38 * Math.cos(ang * 6);
+    return 1850 + 95 * Math.sin(ang * 3 + 1.2) + 50 * Math.cos(ang * 5);
   }
   function getMountainHeight(layer, ang) {
-    // Iconic wavy Alpilles mountains higher in North/East/West, slightly lower toward South-East horizon
     const wave = 0.55 + 0.45 * Math.sin(ang * 2.0 - 0.6);
     if (layer === 0) {
-      return 19 + 11 * Math.sin(ang * 4.0 + 0.3) + 6 * Math.cos(ang * 9.0 - 1.1) + 6 * wave;
+      return 88 + 38 * Math.sin(ang * 4.0 + 0.3) + 20 * Math.cos(ang * 9.0 - 1.1) + 22 * wave;
     }
     if (layer === 1) {
-      return 42 + 18 * Math.sin(ang * 3.0 + 1.4) + 11 * Math.sin(ang * 7.0 + 0.2) + 10 * wave;
+      return 155 + 56 * Math.sin(ang * 3.0 + 1.4) + 32 * Math.sin(ang * 7.0 + 0.2) + 30 * wave;
     }
-    // Layer 3: tall craggy snowy alpine peaks
     const ridge1 = 1.0 - Math.abs(Math.sin(ang * 6.0 + 0.8));
     const ridge2 = 1.0 - Math.abs(Math.cos(ang * 13.0 - 0.4));
     const ridge3 = Math.abs(Math.sin(ang * 23.0 + 1.7));
-    return 72 + 54 * Math.pow(ridge1, 1.15) + 26 * Math.pow(ridge2, 1.3) + 12 * ridge3 + 14 * wave;
+    return 235 + 128 * Math.pow(ridge1, 1.15) + 64 * Math.pow(ridge2, 1.3) + 28 * ridge3 + 35 * wave;
   }
 
   // =========================================================================
@@ -723,14 +797,14 @@
   void main() {
     vec3 col = vColor;
     if (uIsSky == 0) {
-      float fog = 1.0 - exp(-max(vDist - 130.0, 0.0) * 0.0022);
+      float fog = 1.0 - exp(-max(vDist - 420.0, 0.0) * 0.00072);
       col = mix(col, vec3(0.055, 0.115, 0.27), clamp(fog, 0.0, 0.72));
     }
     fragColor = vec4(col, 1.0);
   }`;
 
   // Main Impasto Brushstroke Program
-  // Handles: world static, sky swirls, mountains, river reflections, waterfall, windmill sails, toroidal real-time grass, and horse/knight!
+  // Handles: world static, sky swirls, mountains, river/lake reflections, waterfall, windmill sails, toroidal terrain, toroidal grass, and horse/knight!
   const strokeVS = `#version 300 es
   precision highp float;
 
@@ -750,11 +824,13 @@
   uniform float uTime;
   uniform float uWaterY;
 
-  // Real-time toroidal grass mode
+  // Real-time toroidal grass & open-world terrain modes
   uniform int uIsGrass;
+  uniform int uIsTerrain;
   uniform float uGrassSpan;
-  uniform sampler2D uTerrainTex; // RGBA32F: r=height, g=grassMask, b=pathFactor, a=waterFactor
-  uniform float uTerrainWorldSpan; // 320.0 (from -160 to +160)
+  uniform float uTerrainRingSpan;
+  uniform sampler2D uTerrainTex; // RGBA32F: r=height, g=grassMask, b=roadFactor, a=waterFactor
+  uniform float uTerrainWorldSpan; // 2048.0 (from -1024 to +1024)
 
   out vec2 vUv;
   out vec3 vWorldPos;
@@ -812,7 +888,6 @@
       v += t3 * (1.25 * exp(-(a3 * a3) / 0.08));
     }
 
-    // Remove radial component so velocity stays tangent to sky dome
     v -= d * dot(v, d);
     return v;
   }
@@ -846,6 +921,8 @@
     vec3 T = normalize(aTanMeta.xyz);
     float L0 = aPosLen.w;
     float W0 = aNormWid.w;
+    vec3 colLit = aColLit.rgb;
+    vec3 colShd = aColShd.rgb;
     float cycleAlpha = 1.0;
     float cycleScale = 1.0;
 
@@ -856,7 +933,58 @@
       T = normalize(nm * T);
     }
 
-    // Real-time toroidal grass around camera
+    // Real-time toroidal open-world terrain around camera (covers entire 2km x 2km world seamlessly!)
+    if (uIsTerrain == 1) {
+      float halfSpan = uTerrainRingSpan * 0.5;
+      vec2 rel = wp.xz - uCamPos.xz;
+      vec2 wrapped = mod(rel + halfSpan, uTerrainRingSpan) - halfSpan;
+      vec2 wxz = uCamPos.xz + wrapped;
+
+      vec4 terr = sampleTerrain(wxz);
+      bool isSubmerged = terr.a > 0.72;
+      float rDist = length(wrapped);
+      float edgeFade = 1.0 - smoothstep(halfSpan * 0.78, halfSpan * 0.98, rDist);
+      if (edgeFade <= 0.01) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+      }
+      cycleScale *= edgeFade;
+      cycleAlpha *= edgeFade;
+
+      // Finite-difference normal from world heightmap
+      float hL = sampleTerrain(wxz - vec2(2.0, 0.0)).r;
+      float hR = sampleTerrain(wxz + vec2(2.0, 0.0)).r;
+      float hD = sampleTerrain(wxz - vec2(0.0, 2.0)).r;
+      float hU = sampleTerrain(wxz + vec2(0.0, 2.0)).r;
+      N = normalize(vec3(hL - hR, 4.0, hD - hU));
+
+      float groundY = isSubmerged ? min(terr.r, uWaterY - 0.24) : (terr.r + 0.04);
+      wp = vec3(wxz.x, groundY, wxz.y);
+      float flow = sin(wxz.x * 0.035 + cos(wxz.y * 0.03)) * 3.14159 + seed * 0.6;
+      T = vec3(cos(flow), 0.0, sin(flow));
+      T.y = -(N.x * T.x + N.z * T.z) / max(N.y, 0.25);
+      T = normalize(T);
+
+      // Biome / road / slope / riverbed pigment adaptation
+      float roadF = terr.b;
+      float slope = 1.0 - N.y;
+      if (isSubmerged) {
+        colLit = vec3(0.06, 0.16, 0.34);
+        colShd = vec3(0.02, 0.07, 0.19);
+      } else if (roadF > 0.35) {
+        colLit = mix(colLit, vec3(0.43, 0.37, 0.26), roadF);
+        colShd = mix(colShd, vec3(0.13, 0.15, 0.21), roadF);
+      } else if (slope > 0.24) {
+        colLit = vec3(0.19, 0.25, 0.38);
+        colShd = vec3(0.06, 0.09, 0.18);
+      } else {
+        float biomeMix = 0.5 + 0.5 * sin(wxz.x * 0.014 + cos(wxz.y * 0.016));
+        colLit = mix(vec3(0.14, 0.29, 0.19), vec3(0.24, 0.39, 0.21), biomeMix);
+        colShd = vec3(0.05, 0.11, 0.14);
+      }
+    }
+
+    // Real-time toroidal fine grass around camera
     if (uIsGrass == 1) {
       float halfSpan = uGrassSpan * 0.5;
       vec2 rel = wp.xz - uCamPos.xz;
@@ -878,12 +1006,10 @@
       cycleScale *= edgeFade * mask;
       cycleAlpha *= edgeFade;
 
-      // Ground grass blade + gentle night wind sway
       float bladeH = L0;
       float sway = sin(uTime * 1.9 + wxz.x * 0.35 + wxz.y * 0.27 + seed * 6.28) * 0.16;
       wp = vec3(wxz.x + sway * 0.5, terr.r + bladeH * 0.42, wxz.y + sway * 0.3);
       T = normalize(vec3(sway + (seed - 0.5) * 0.35, 1.0, (hash11(seed * 41.0) - 0.5) * 0.35));
-      // Face somewhat toward camera around vertical blade axis so thin blades stay visible
       vec3 toCamH = normalize(vec3(uCamPos.x - wp.x, 0.15, uCamPos.z - wp.z));
       N = normalize(mix(N, toCamH, 0.72));
     }
@@ -894,7 +1020,6 @@
       vec3 dir = wp / max(R, 1.0);
       float phase = fract(seed * 7.13 + uTime * 0.042);
       float dt = (phase - 0.5) * 0.20;
-      // 2-step RK2 advection along curved sky vortices
       vec3 v1 = skyFlowVel(dir);
       vec3 midDir = normalize(dir + v1 * (dt * 0.5));
       vec3 v2 = skyFlowVel(midDir);
@@ -923,29 +1048,27 @@
     if (matType == 4) {
       float isMist = step(0.84, seed);
       if (isMist > 0.5) {
-        // Swirling pool mist
         float p = fract(seed * 11.3 + uTime * 0.22);
         float ang = p * 6.28318;
-        wp.x += cos(ang) * 1.6;
-        wp.z += sin(ang) * 1.6;
-        wp.y += sin(p * 3.14159) * 1.2;
+        wp.x += cos(ang) * 2.2;
+        wp.z += sin(ang) * 2.2;
+        wp.y += sin(p * 3.14159) * 1.4;
         float cf = smoothstep(0.0, 0.22, p) * (1.0 - smoothstep(0.72, 1.0, p));
         cycleScale *= cf;
         cycleAlpha *= cf * 0.8;
       } else {
-        // Vertical cascade down the cliff face (y from ~24.5 down to WATER_Y)
         float p = fract(seed * 9.7 + uTime * 0.42);
-        float topY = 24.5;
+        float topY = 29.5;
         float botY = uWaterY - 0.2;
         wp.y = mix(topY, botY, p);
-        wp.x += p * 4.8 + sin(p * 10.0 + seed * 12.0) * 0.35;
+        wp.x += p * 6.0 + sin(p * 10.0 + seed * 12.0) * 0.4;
         float cf = smoothstep(0.0, 0.12, p) * (1.0 - smoothstep(0.88, 1.0, p));
         cycleScale *= cf;
         cycleAlpha *= cf;
       }
     }
 
-    // River water gentle ripple
+    // River & lake water gentle ripple
     if (matType == 5) {
       float rip = sin(uTime * 2.2 + wp.x * 0.45 + wp.z * 0.6 + seed * 6.28);
       wp.y += rip * 0.045;
@@ -962,15 +1085,18 @@
     float dist = length(toCam);
     vec3 viewDir = toCam / max(dist, 0.001);
 
-    // Sky & celestial (matType 2, 6) stay crisp at R=620..650; matType 8 (windows/lantern) uses world LOD & small depth spread
+    // Distance thinning with smooth shrink-to-zero (expanded for 2km open world!)
     float rLod = hash11(seed * 97.13 + float(gl_InstanceID % 17) * 0.013);
     float shrinkFade = 1.0;
-    if (matType == 0 || matType == 3 || matType == 5) {
-      float maxD = mix(62.0, 240.0, pow(rLod, 1.65));
+    if (uIsTerrain == 0 && (matType == 0 || matType == 3)) {
+      float maxD = mix(95.0, 680.0, pow(rLod, 1.65));
       float span = maxD * 0.30;
       shrinkFade = 1.0 - smoothstep(maxD - span, maxD, dist);
+    } else if (matType == 5) {
+      float maxD = mix(220.0, 1150.0, pow(rLod, 1.25));
+      shrinkFade = 1.0 - smoothstep(maxD * 0.72, maxD, dist);
     } else if (matType == 1 || matType == 8) {
-      float maxD = mix(220.0, 620.0, pow(rLod, 1.25));
+      float maxD = mix(380.0, 1500.0, pow(rLod, 1.25));
       shrinkFade = 1.0 - smoothstep(maxD * 0.72, maxD, dist);
     }
 
@@ -981,7 +1107,7 @@
     }
 
     // Distant strokes become larger & fewer
-    float distGrow = (matType == 2 || matType == 6) ? 1.0 : (1.0 + dist * 0.015);
+    float distGrow = (matType == 2 || matType == 6) ? 1.0 : (1.0 + dist * 0.014);
     float L = L0 * distGrow;
     float W = W0 * distGrow;
 
@@ -991,27 +1117,25 @@
     float pxPerUnit = (uViewport.y * 0.5 * uProj[1][1]) / viewZ;
 
     float minPxL = (matType == 2 || matType == 6) ? 5.5 : 3.6;
-    float maxPxL = (matType == 2 || matType == 6) ? 110.0 : (matType == 7 ? 75.0 : 68.0);
-    float minPxW = (matType == 0) ? 2.4 : 1.6;
-    float maxPxW = (matType == 2 || matType == 6) ? 34.0 : 28.0;
+    float maxPxL = (matType == 2 || matType == 6) ? 115.0 : ((uIsTerrain == 1) ? 115.0 : (matType == 7 ? 75.0 : 84.0));
+    float minPxW = (matType == 0) ? 2.6 : 1.6;
+    float maxPxW = (matType == 2 || matType == 6) ? 34.0 : ((uIsTerrain == 1) ? 58.0 : (matType == 1 ? 46.0 : 30.0));
 
     float clampedL = clamp(L * pxPerUnit, minPxL, maxPxL) / max(pxPerUnit, 1e-4);
     float clampedW = clamp(W * pxPerUnit, minPxW, maxPxW) / max(pxPerUnit, 1e-4);
 
-    // Apply shrinkFade AFTER screen-size clamping so fading strokes shrink smoothly to 0
     L = clampedL * totalScale;
     W = clampedW * totalScale;
 
     // Anti-flicker depth spacing increasing with distance
     float layerRand = hash11(seed * 313.7 + 0.37);
-    float layerSpread = (matType == 2 || matType == 6) ? (layerRand * 4.5)
-                      : (matType == 7 ? (0.4 + layerRand * dist * 0.014)
+    float layerSpread = (matType == 2 || matType == 6) ? (layerRand * 16.0)
+                      : (matType == 7 ? (1.2 + layerRand * dist * 0.012)
                       : (matType == 8 ? (layerRand * 0.04)
                       : ((layerRand - 0.15) * (0.014 + max(dist - 12.0, 0.0) * 0.011))));
     vec3 offsetDir = normalize(mix(N, viewDir, 0.5));
     vec3 centerPos = wp + offsetDir * layerSpread;
 
-    // Orthonormal stroke basis fixed in 3D world orientation
     vec3 T_ortho = T - N * dot(T, N);
     float tl = length(T_ortho);
     if (tl < 1e-4) {
@@ -1024,13 +1148,13 @@
 
     vec3 vertPos = centerPos + T_ortho * (aCorner.x * L) + B * (aCorner.y * W);
 
-    vUv = aCorner * 2.0; // [-1, 1]
+    vUv = aCorner * 2.0;
     vWorldPos = vertPos;
     vNormal = N;
     vTangent = T_ortho;
     vBitangent = B;
-    vColLit = aColLit.rgb;
-    vColShd = aColShd.rgb;
+    vColLit = colLit;
+    vColShd = colShd;
     vEmissive = aColLit.a;
     vRelief = aColShd.a;
     vSeed = seed;
@@ -1059,7 +1183,7 @@
   uniform vec3 uCamPos;
   uniform vec3 uMoonDir;
   uniform vec3 uLanternPos;
-  uniform vec4 uWarmLights[8]; // xyz = pos, w = radius
+  uniform vec4 uWarmLights[8];
   uniform sampler2D uReflTex;
   uniform mat4 uReflVP;
   uniform int uHasRefl;
@@ -1077,7 +1201,6 @@
   void main() {
     if (vAlpha <= 0.02) discard;
 
-    // Fixed number of bristles per brushstroke!
     const float NUM_BRISTLES = 8.0;
     float u = vUv.x;
     float v = vUv.y;
@@ -1088,7 +1211,6 @@
     float bHash = hash11(vSeed * 53.17 + bId * 17.31);
     float bHash2 = hash11(vSeed * 91.73 + bId * 31.19);
 
-    // Tapered organic oil-brush silhouette & bristle ends
     float endReach = 0.78 + 0.22 * bHash;
     float widthEnv = 1.0 - pow(abs(v), 2.5);
     float uNorm = abs(u) / (endReach * mix(0.75, 1.0, widthEnv));
@@ -1097,8 +1219,6 @@
     float tipBreak = smoothstep(0.72, 1.0, uNorm);
     if (tipBreak > 0.22 && bHash2 < tipBreak * 0.48) discard;
 
-    // Impasto bristle height & analytical normal perturbation
-    // fwidth smoothly prevents moire shimmer on sub-pixel distant bristles while keeping fixed count
     float fw = fwidth(bristleCoord);
     float bFilter = clamp(1.0 - fw * 0.42, 0.12, 1.0);
     float ridge = sin(bFrac * 3.14159265);
@@ -1108,34 +1228,27 @@
     float reliefAmp = mix(0.12, 0.34, vRelief) * bFilter;
     vec3 N_imp = normalize(vNormal + (dRidgeDv * reliefAmp) * vBitangent + (dEdgeDu * 0.18 * vRelief) * vTangent);
 
-    // View vector
     vec3 V = normalize(uCamPos - vWorldPos);
     if (dot(N_imp, V) < 0.0 && vMatType != 2 && vMatType != 6) {
-      // Keep double-sided foliage / strokes softly lit without harsh inversion
       N_imp = normalize(mix(N_imp, -N_imp, 0.55));
     }
 
-    // 1. Moonlight illumination & Lit/Shadow pigment selection
     float ndlMoon = dot(N_imp, uMoonDir);
     float strokeBias = (vSeed - 0.5) * 0.22;
     float litFactor = smoothstep(-0.28 + strokeBias, 0.58 + strokeBias, ndlMoon);
 
     vec3 baseCol = mix(vColShd, vColLit, litFactor);
 
-    // Subtle per-stroke random pigment color variation (hue/value jitter)
     float cVar1 = hash11(vSeed * 19.3) - 0.5;
     float cVar2 = hash11(vSeed * 71.9) - 0.5;
     float cVar3 = hash11(vSeed * 113.7) - 0.5;
     baseCol *= vec3(1.0 + cVar1 * 0.13, 1.0 + cVar2 * 0.11, 1.0 + cVar3 * 0.13);
-    // Subtle bristle-to-bristle paint streak variation
     baseCol *= (0.94 + 0.12 * ridge * (0.6 + 0.4 * bHash));
 
-    // River reflection sampling per brushstroke!
     if (vMatType == 5 && uHasRefl == 1) {
       vec4 rp = uReflVP * vec4(vWorldPos, 1.0);
       if (rp.w > 0.1) {
         vec2 ruv = rp.xy / rp.w * 0.5 + 0.5;
-        // Painterly horizontal ripple distortion matching oil ripples
         ruv.x += sin(vWorldPos.z * 0.8 + uTime * 2.6 + vSeed * 6.28) * 0.018;
         ruv.y += cos(vWorldPos.x * 0.6 + uTime * 2.1) * 0.012;
         if (ruv.x > 0.02 && ruv.x < 0.98 && ruv.y > 0.02 && ruv.y < 0.98) {
@@ -1146,19 +1259,16 @@
       }
     }
 
-    // 2. Cool blue-shifted desaturated moonlight vs Warm lamp zones
     vec3 finalCol = baseCol;
     if (vMatType != 2 && vMatType != 6) {
-      // Accumulate warm light from rider's lantern + village/cottage lamps
       float warmAmt = 0.0;
       vec3 warmSpec = vec3(0.0);
 
-      // Rider's swaying lantern
       vec3 toLantern = uLanternPos - vWorldPos;
       float dLantern = length(toLantern);
-      if (dLantern < 21.0) {
+      if (dLantern < 22.0) {
         vec3 L = toLantern / max(dLantern, 0.05);
-        float atten = smoothstep(21.0, 1.2, dLantern);
+        float atten = smoothstep(22.0, 1.2, dLantern);
         atten = atten * atten;
         float nDotL = clamp(dot(N_imp, L) * 0.6 + 0.4, 0.0, 1.0);
         warmAmt += atten * (0.45 + 0.75 * nDotL);
@@ -1166,7 +1276,6 @@
         warmSpec += vec3(1.0, 0.78, 0.36) * pow(max(dot(N_imp, H), 0.0), 18.0) * atten * 0.42;
       }
 
-      // Village / cottage / bridge warm lights
       for (int i = 0; i < 8; i++) {
         vec4 wl = uWarmLights[i];
         vec3 toW = wl.xyz - vWorldPos;
@@ -1182,37 +1291,30 @@
 
       warmAmt = clamp(warmAmt, 0.0, 1.25);
 
-      // Moonlit zone: cool cobalt-blue tint & lowered saturation
       float luma = dot(baseCol, vec3(0.299, 0.587, 0.114));
       vec3 moonlitCol = mix(vec3(luma), baseCol, 0.62) * vec3(0.68, 0.84, 1.20);
-      // Moonlight impasto sheen on raised paint ridges
       vec3 H_moon = normalize(uMoonDir + V);
       float moonSpec = pow(max(dot(N_imp, H_moon), 0.0), 22.0) * (0.14 + 0.16 * vRelief);
       moonlitCol += vec3(0.55, 0.72, 1.0) * moonSpec;
 
-      // Warm-lit zone: vibrant, warm golden-amber saturated paint!
       vec3 warmLitCol = baseCol * vec3(1.24, 1.02, 0.72) + vec3(0.20, 0.12, 0.02) * warmAmt + warmSpec;
 
       finalCol = mix(moonlitCol, warmLitCol, clamp(warmAmt, 0.0, 1.0));
 
-      // Self-emissive (lit windows, lantern flame)
       if (vEmissive > 0.05) {
         finalCol = mix(finalCol, vColLit * 1.35, vEmissive);
       }
 
-      // Snow peaks keep crisp moonlit icy brightness
       if (vMatType == 7) {
         finalCol = mix(finalCol, vColLit * (0.88 + 0.18 * litFactor), 0.65);
       }
 
-      // Atmospheric night blue haze on far world/mountains (not sky)
       float camDist = length(uCamPos - vWorldPos);
-      float fogStart = (vMatType == 7) ? 260.0 : 125.0;
-      float fogRate  = (vMatType == 7) ? 0.0014 : 0.0024;
+      float fogStart = (vMatType == 7) ? 620.0 : 340.0;
+      float fogRate  = (vMatType == 7) ? 0.00055 : 0.00085;
       float fog = 1.0 - exp(-max(camDist - fogStart, 0.0) * fogRate);
-      finalCol = mix(finalCol, vec3(0.07, 0.15, 0.34), clamp(fog, 0.0, 0.62));
+      finalCol = mix(finalCol, vec3(0.07, 0.15, 0.34), clamp(fog, 0.0, 0.58));
     } else {
-      // Sky swirls, Moon, and Stars: luminous Starry Night impasto sheen
       float skySpec = pow(max(dot(N_imp, normalize(uMoonDir + V)), 0.0), 14.0) * 0.10;
       finalCol = baseCol * (0.94 + 0.14 * ridge) + vec3(0.18, 0.25, 0.35) * skySpec;
       if (vEmissive > 0.05) {
@@ -1227,40 +1329,62 @@
   const strokeProg = createProgram(strokeVS, strokeFS);
 
   // =========================================================================
-  // 5. Procedural Terrain Height & Mask DataTexture (for real-time GPU grass)
+  // 5. Procedural 1024x1024 World Height & Road/River/Grass Mask DataTexture
   // =========================================================================
-  const TERRAIN_TEX_RES = 512;
-  const TERRAIN_WORLD_SPAN = 320.0;
+  const TERRAIN_TEX_RES = 1024;
+  const TERRAIN_WORLD_SPAN = 2048.0;
   const terrainTexData = new Float32Array(TERRAIN_TEX_RES * TERRAIN_TEX_RES * 4);
-  for (let iy = 0; iy < TERRAIN_TEX_RES; iy++) {
-    const z = ((iy / (TERRAIN_TEX_RES - 1)) - 0.5) * TERRAIN_WORLD_SPAN;
-    for (let ix = 0; ix < TERRAIN_TEX_RES; ix++) {
-      const x = ((ix / (TERRAIN_TEX_RES - 1)) - 0.5) * TERRAIN_WORLD_SPAN;
-      const h = getRawTerrainHeight(x, z);
-      const rDist = getRiverDistance(x, z);
-      const pInfo = getPathInfo(x, z);
-      const vDist = getVillageRoadDist(x, z);
-      const onBridge = getBridgeAt(x, z) !== null;
-
-      // Suppress grass on roads, river, waterfall cliff, cottage/church footprints
-      let grassMask = 1.0;
-      if (rDist < 1.2 || onBridge) grassMask = 0.0;
-      else if (pInfo.dist < 3.0) grassMask = smoothstep(2.0, 3.6, pInfo.dist);
-      else if (vDist < 2.6) grassMask = smoothstep(1.6, 3.0, vDist);
-
-      if (x < -75 && Math.abs(z - WATERFALL_POS.z) < 20) grassMask = 0.0;
-      if (Math.hypot(x - COTTAGE_POS.x, z - COTTAGE_POS.z) < 4.8) grassMask = 0.0;
-      if (Math.hypot(x - WINDMILL_POS.x, z - WINDMILL_POS.z) < 4.6) grassMask = 0.0;
-      if (Math.hypot(x - CHURCH_POS.x, z - CHURCH_POS.z) < 7.0) grassMask = 0.0;
-      for (const vh of VILLAGE_HOUSES) {
-        if (Math.hypot(x - vh.x, z - vh.z) < 4.2) grassMask = 0.0;
+  {
+    // Fast O(N_road) polyline rasterizer for roadMask across 2048m x 2048m
+    const roadMask = new Float32Array(TERRAIN_TEX_RES * TERRAIN_TEX_RES);
+    const splatRoadPt = (wx, wz, radiusM) => {
+      const cx = Math.round(((wx / TERRAIN_WORLD_SPAN) + 0.5) * (TERRAIN_TEX_RES - 1));
+      const cy = Math.round(((wz / TERRAIN_WORLD_SPAN) + 0.5) * (TERRAIN_TEX_RES - 1));
+      const rPix = Math.ceil(radiusM / (TERRAIN_WORLD_SPAN / TERRAIN_TEX_RES));
+      for (let dy = -rPix; dy <= rPix; dy++) {
+        const py = cy + dy;
+        if (py < 0 || py >= TERRAIN_TEX_RES) continue;
+        for (let dx = -rPix; dx <= rPix; dx++) {
+          const px = cx + dx;
+          if (px < 0 || px >= TERRAIN_TEX_RES) continue;
+          const dM = Math.hypot(dx, dy) * (TERRAIN_WORLD_SPAN / TERRAIN_TEX_RES);
+          const v = smoothstep(radiusM, radiusM * 0.45, dM);
+          const idx = py * TERRAIN_TEX_RES + px;
+          if (v > roadMask[idx]) roadMask[idx] = v;
+        }
       }
+    };
+    for (let i = 0; i < PATH_N; i++) splatRoadPt(pathPts[i].x, pathPts[i].z, 4.0);
+    for (const arr of extraRoadSamples) {
+      for (let i = 0; i < arr.length; i++) splatRoadPt(arr[i].x, arr[i].z, 4.2);
+    }
 
-      const idx = (iy * TERRAIN_TEX_RES + ix) * 4;
-      terrainTexData[idx]     = h;
-      terrainTexData[idx + 1] = grassMask;
-      terrainTexData[idx + 2] = pInfo.dist < 3.2 ? 1.0 : 0.0;
-      terrainTexData[idx + 3] = rDist < 0.0 ? 1.0 : 0.0;
+    for (let iy = 0; iy < TERRAIN_TEX_RES; iy++) {
+      const z = ((iy / (TERRAIN_TEX_RES - 1)) - 0.5) * TERRAIN_WORLD_SPAN;
+      for (let ix = 0; ix < TERRAIN_TEX_RES; ix++) {
+        const x = ((ix / (TERRAIN_TEX_RES - 1)) - 0.5) * TERRAIN_WORLD_SPAN;
+        const h = getRawTerrainHeight(x, z, true);
+        const rDist = getRiverDistance(x, z);
+        const rm = roadMask[iy * TERRAIN_TEX_RES + ix];
+        const onBridge = getBridgeAt(x, z) !== null;
+
+        let grassMask = 1.0;
+        if (rDist < 1.2 || onBridge) grassMask = 0.0;
+        else if (rm > 0.05) grassMask = 1.0 - rm;
+
+        if (x < -156 && Math.abs(z - WATERFALL_POS.z) < 28) grassMask = 0.0;
+        if (Math.hypot(x - COTTAGE_POS.x, z - COTTAGE_POS.z) < 5.0) grassMask = 0.0;
+        if (Math.hypot(x - WINDMILL_POS.x, z - WINDMILL_POS.z) < 5.0) grassMask = 0.0;
+        if (Math.hypot(x - WINDMILL2_POS.x, z - WINDMILL2_POS.z) < 5.5) grassMask = 0.0;
+        if (Math.hypot(x - CHURCH_POS.x, z - CHURCH_POS.z) < 7.5) grassMask = 0.0;
+        if (Math.hypot(x - WATCHTOWER_POS.x, z - WATCHTOWER_POS.z) < 6.0) grassMask = 0.0;
+
+        const idx = (iy * TERRAIN_TEX_RES + ix) * 4;
+        terrainTexData[idx]     = h;
+        terrainTexData[idx + 1] = grassMask;
+        terrainTexData[idx + 2] = rm;
+        terrainTexData[idx + 3] = rDist < 0.0 ? 1.0 : 0.0;
+      }
     }
   }
 
@@ -1443,11 +1567,11 @@
     return { vao, vertCount: positions.length / 3 };
   }
 
-  // Sky solid backdrop dome
+  // Sky solid backdrop dome (R = 2480m for 2km open world)
   let skySolidMesh;
   {
     const pos = [], col = [];
-    const rings = 18, segs = 48, R = 690;
+    const rings = 18, segs = 48, R = 2480;
     for (let r = 0; r < rings; r++) {
       const phi0 = (r / rings) * Math.PI * 0.62 - 0.12;
       const phi1 = ((r + 1) / rings) * Math.PI * 0.62 - 0.12;
@@ -1468,32 +1592,32 @@
     skySolidMesh = buildSolidMesh(pos, col);
   }
 
-  // Three Mountain Layer Solid Silhouettes
+  // Three Distant Mountain Layer Solid Silhouettes (r = 960, 1360, 1850m)
   const mountainSolidMeshes = [];
   {
     const baseCols = [
-      [0.03, 0.07, 0.17], // Layer 1 near indigo
-      [0.05, 0.11, 0.27], // Layer 2 mid ultramarine
-      [0.07, 0.14, 0.32]  // Layer 3 far alpine base
+      [0.03, 0.07, 0.17],
+      [0.05, 0.11, 0.27],
+      [0.07, 0.14, 0.32]
     ];
     for (let layer = 0; layer < 3; layer++) {
       const pos = [], col = [];
-      const segs = 220;
+      const segs = 240;
       const bc = baseCols[layer];
       for (let s = 0; s < segs; s++) {
         const a0 = (s / segs) * Math.PI * 2;
         const a1 = ((s + 1) / segs) * Math.PI * 2;
-        const r0 = getMountainRadius(layer, a0) + 1.8;
-        const r1 = getMountainRadius(layer, a1) + 1.8;
-        const h0 = getMountainHeight(layer, a0) - 0.6;
-        const h1 = getMountainHeight(layer, a1) - 0.6;
-        const yBot = -22;
+        const r0 = getMountainRadius(layer, a0) + 6.0;
+        const r1 = getMountainRadius(layer, a1) + 6.0;
+        const h0 = getMountainHeight(layer, a0) - 1.5;
+        const h1 = getMountainHeight(layer, a1) - 1.5;
+        const yBot = -70;
         const p0b = [r0 * Math.cos(a0), yBot, r0 * Math.sin(a0)];
         const p1b = [r1 * Math.cos(a1), yBot, r1 * Math.sin(a1)];
         const p0t = [r0 * Math.cos(a0), h0,   r0 * Math.sin(a0)];
         const p1t = [r1 * Math.cos(a1), h1,   r1 * Math.sin(a1)];
-        const tc0 = (layer === 2 && h0 > 114) ? [0.28, 0.39, 0.58] : bc;
-        const tc1 = (layer === 2 && h1 > 114) ? [0.28, 0.39, 0.58] : bc;
+        const tc0 = (layer === 2 && h0 > 295) ? [0.28, 0.39, 0.58] : bc;
+        const tc1 = (layer === 2 && h1 > 295) ? [0.28, 0.39, 0.58] : bc;
         pos.push(...p0b, ...p1b, ...p1t, ...p0b, ...p1t, ...p0t);
         col.push(...bc, ...bc, ...tc1, ...bc, ...tc1, ...tc0);
       }
@@ -1501,7 +1625,7 @@
     }
   }
 
-  // 7B. Sky Swirls + Moon + Concentric Halos + Radiant Stars
+  // 7B. Sky Swirls + Moon + Concentric Halos + Radiant Stars (scaled for 2km open world)
   function skyFlowJS(dx, dy, dz) {
     const l = Math.hypot(dx, dy, dz) || 1;
     dx /= l; dy /= l; dz /= l;
@@ -1534,14 +1658,16 @@
   const skyCap = Math.round(92000 * strokeBudgetScale);
   const skyBatch = new StrokeBatch(skyCap + 12000);
   {
-    const R_SKY = 650;
+    const R_SKY = 2350;
+    const R_MOON = 2240;
+    const S_SKY = R_SKY / 650.0;
     const swirlN = Math.round(82000 * strokeBudgetScale);
     const skyPalettes = [
-      [[0.09, 0.23, 0.56], [0.04, 0.10, 0.30]], // Cobalt
-      [[0.14, 0.34, 0.76], [0.06, 0.16, 0.46]], // Ultramarine
-      [[0.16, 0.50, 0.60], [0.07, 0.27, 0.42]], // Teal-turquoise
-      [[0.05, 0.14, 0.38], [0.02, 0.07, 0.22]], // Deep Prussian
-      [[0.46, 0.68, 0.72], [0.18, 0.40, 0.58]]  // Pale luminous swirl wisps
+      [[0.09, 0.23, 0.56], [0.04, 0.10, 0.30]],
+      [[0.14, 0.34, 0.76], [0.06, 0.16, 0.46]],
+      [[0.16, 0.50, 0.60], [0.07, 0.27, 0.42]],
+      [[0.05, 0.14, 0.38], [0.02, 0.07, 0.22]],
+      [[0.46, 0.68, 0.72], [0.18, 0.40, 0.58]]
     ];
     const vCenters = [
       norm3(-0.26, 0.48, -0.84),
@@ -1549,8 +1675,11 @@
       norm3(-0.66, 0.27, -0.70)
     ];
 
+    function azPhase(dx, dy, dz) {
+      return dy * 1.6 + 0.35 * Math.sin(Math.atan2(dz, dx) * 2.5);
+    }
+
     for (let i = 0; i < swirlN; i++) {
-      // Sample upper hemisphere down to slightly below horizon
       const u = rand();
       const sinPhi = mix(-0.04, 0.995, Math.pow(u, 0.85));
       const cosPhi = Math.sqrt(Math.max(0, 1 - sinPhi * sinPhi));
@@ -1558,7 +1687,6 @@
       const dx = cosPhi * Math.cos(th), dy = sinPhi, dz = cosPhi * Math.sin(th);
       const t = skyFlowJS(dx, dy, dz);
 
-      // Ribbon color band based on vortex proximity + wave phase
       let band = Math.sin(azPhase(dx, dy, dz) * 14.0);
       let nearV = 0;
       for (const vc of vCenters) {
@@ -1576,20 +1704,14 @@
 
       const pal = skyPalettes[palIdx];
       const distToMoon = Math.acos(clamp(dx*MOON_DIR[0] + dy*MOON_DIR[1] + dz*MOON_DIR[2], -1, 1));
-      // Keep direct moon disk clean for moon strokes
       if (distToMoon < 0.075) continue;
 
-      const len = randRange(18, 34) * (1.0 - 0.35 * sinPhi);
-      const wid = randRange(4.8, 9.2);
+      const len = randRange(18, 34) * S_SKY * (1.0 - 0.35 * sinPhi);
+      const wid = randRange(4.8, 9.2) * S_SKY;
       skyBatch.push(dx*R_SKY, dy*R_SKY, dz*R_SKY, len, -dx, -dy, -dz, wid, t[0], t[1], t[2], 2, pal[0], pal[1], nearV * 0.25, 0.78);
     }
 
-    function azPhase(dx, dy, dz) {
-      return dy * 1.6 + 0.35 * Math.sin(Math.atan2(dz, dx) * 2.5);
-    }
-
     // Golden-Orange Full Moon + Concentric Halo Rings
-    const R_MOON = 620;
     const mRight = norm3(...cross3([0, 1, 0], MOON_DIR));
     const mUp = norm3(...cross3(MOON_DIR, mRight));
     const moonCoreN = Math.round(900 * strokeBudgetScale);
@@ -1609,10 +1731,9 @@
       );
       const coreCol = rr < 0.032 ? [1.0, 0.86, 0.42] : [1.0, 0.64, 0.14];
       const shdCol  = [0.95, 0.52, 0.10];
-      skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(8, 15), -d[0], -d[1], -d[2], randRange(3.6, 6.4), tang[0], tang[1], tang[2], 6, coreCol, shdCol, 0.95, 0.85);
+      skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(8, 15)*S_SKY, -d[0], -d[1], -d[2], randRange(3.6, 6.4)*S_SKY, tang[0], tang[1], tang[2], 6, coreCol, shdCol, 0.95, 0.85);
     }
 
-    // Concentric moon halo rings
     const ringRadii = [0.072, 0.102, 0.135, 0.172, 0.215];
     const ringCols = [
       [[1.0, 0.78, 0.26], [0.94, 0.58, 0.14]],
@@ -1639,13 +1760,13 @@
           mRight[1]*(-Math.sin(a)) + mUp[1]*Math.cos(a),
           mRight[2]*(-Math.sin(a)) + mUp[2]*Math.cos(a)
         );
-        skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(13, 24), -d[0], -d[1], -d[2], randRange(3.5, 6.2), tang[0], tang[1], tang[2], 6, rc[0], rc[1], 0.85 - rIdx*0.14, 0.75);
+        skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(13, 24)*S_SKY, -d[0], -d[1], -d[2], randRange(3.5, 6.2)*S_SKY, tang[0], tang[1], tang[2], 6, rc[0], rc[1], 0.85 - rIdx*0.14, 0.75);
       }
     }
 
     // 11 Radiant Golden-Yellow Stars (Starburst rays + concentric rings)
     const heroStars = [
-      norm3(-0.34, 0.25, -0.90), // Prominent Venus near cypress
+      norm3(-0.34, 0.25, -0.90),
       norm3(-0.62, 0.52, -0.58),
       norm3(-0.08, 0.72, -0.69),
       norm3( 0.28, 0.76, -0.58),
@@ -1661,11 +1782,10 @@
       const sd = heroStars[sIdx];
       const sr = norm3(...cross3([0, 1, 0], sd));
       const su = norm3(...cross3(sd, sr));
-      const scaleS = (sIdx === 0) ? 1.45 : randRange(0.78, 1.15);
+      const scaleS = ((sIdx === 0) ? 1.45 : randRange(0.78, 1.15)) * S_SKY;
 
-      // Soft glowing star core + golden starburst radial rays
       for (let c = 0; c < Math.max(8, Math.round(16 * strokeBudgetScale)); c++) {
-        const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * 0.015 * scaleS;
+        const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * 0.015 * (scaleS / S_SKY);
         const ox = Math.cos(a) * rr, oy = Math.sin(a) * rr;
         const d = norm3(sd[0] + sr[0]*ox + su[0]*oy, sd[1] + sr[1]*ox + su[1]*oy, sd[2] + sr[2]*ox + su[2]*oy);
         skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(8, 13)*scaleS, -d[0], -d[1], -d[2], randRange(4.0, 6.5)*scaleS, sr[0]*Math.cos(a)+su[0]*Math.sin(a), sr[1]*Math.cos(a)+su[1]*Math.sin(a), sr[2]*Math.cos(a)+su[2]*Math.sin(a), 6, [1.0, 0.96, 0.72], [1.0, 0.80, 0.30], 1.0, 0.7);
@@ -1680,15 +1800,14 @@
           sr[2]*Math.cos(a) + su[2]*Math.sin(a)
         );
         for (let k = 0; k < segsPerRay; k++) {
-          const distA = (0.012 + (k / segsPerRay) * 0.052) * scaleS;
+          const distA = (0.012 + (k / segsPerRay) * 0.052) * (scaleS / S_SKY);
           const d = norm3(sd[0] + rayDir[0]*distA, sd[1] + rayDir[1]*distA, sd[2] + rayDir[2]*distA);
           const colL = k < 2 ? [1.0, 0.94, 0.56] : [1.0, 0.76, 0.20];
           const colS = [0.88, 0.62, 0.16];
           skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(9, 16)*scaleS, -d[0], -d[1], -d[2], randRange(2.2, 4.0)*scaleS*(1.0 - k*0.1), rayDir[0], rayDir[1], rayDir[2], 6, colL, colS, 0.95, 0.8);
         }
       }
-      // Concentric star halo rings
-      for (const hr of [0.025 * scaleS, 0.044 * scaleS]) {
+      for (const hr of [0.025 * (scaleS / S_SKY), 0.044 * (scaleS / S_SKY)]) {
         const nH = Math.max(16, Math.round(40 * strokeBudgetScale));
         for (let k = 0; k < nH; k++) {
           const a = (k / nH) * Math.PI * 2;
@@ -1696,22 +1815,22 @@
           const d = norm3(sd[0] + sr[0]*ox + su[0]*oy, sd[1] + sr[1]*ox + su[1]*oy, sd[2] + sr[2]*ox + su[2]*oy);
           const tang = norm3(sr[0]*(-Math.sin(a)) + su[0]*Math.cos(a), sr[1]*(-Math.sin(a)) + su[1]*Math.cos(a), sr[2]*(-Math.sin(a)) + su[2]*Math.cos(a));
           const colL = hr < 0.035 ? [1.0, 0.88, 0.42] : [0.58, 0.82, 0.78];
-          skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(8, 14)*scaleS, -d[0], -d[1], -d[2], randRange(2.4, 4.0), tang[0], tang[1], tang[2], 6, colL, [0.35, 0.55, 0.65], 0.68, 0.7);
+          skyBatch.push(d[0]*R_MOON, d[1]*R_MOON, d[2]*R_MOON, randRange(8, 14)*scaleS, -d[0], -d[1], -d[2], randRange(2.4, 4.0)*S_SKY, tang[0], tang[1], tang[2], 6, colL, [0.35, 0.55, 0.65], 0.68, 0.7);
         }
       }
     }
   }
   const skyGPU = skyBatch.upload();
 
-  // 7C. Three Mountain Layers (Layer 3 has Snow-Capped Peaks!)
-  setLoadProgress(25, '正在堆疊三層山脈與積雪山脊…');
-  const mtnCap = Math.round(145000 * strokeBudgetScale);
+  // 7C. Three Mountain Ranges at Horizon (Layer 3 has Snow-Capped Alpine Peaks!)
+  setLoadProgress(25, '正在堆疊三層廣闊山脈與積雪山脊…');
+  const mtnCap = Math.round(150000 * strokeBudgetScale);
   const mtnBatch = new StrokeBatch(mtnCap + 4000);
   {
     const counts = [
-      Math.round(38000 * strokeBudgetScale),
-      Math.round(48000 * strokeBudgetScale),
-      Math.round(56000 * strokeBudgetScale)
+      Math.round(40000 * strokeBudgetScale),
+      Math.round(50000 * strokeBudgetScale),
+      Math.round(58000 * strokeBudgetScale)
     ];
     for (let layer = 0; layer < 3; layer++) {
       const N = counts[layer];
@@ -1720,40 +1839,35 @@
         const rBase = getMountainRadius(layer, ang);
         const hPeak = getMountainHeight(layer, ang);
         const vFrac = rand();
-        const y = mix(-8, hPeak, Math.pow(vFrac, 0.82));
-        // Sloped inward slightly from base to crest
-        const r = rBase - vFrac * (layer === 0 ? 12 : (layer === 1 ? 20 : 32));
+        const y = mix(-35, hPeak, Math.pow(vFrac, 0.82));
+        const r = rBase - vFrac * (layer === 0 ? 55 : (layer === 1 ? 85 : 130));
         const px = r * Math.cos(ang), pz = r * Math.sin(ang);
         const nx = -Math.cos(ang) * 0.85, ny = 0.52, nz = -Math.sin(ang) * 0.85;
 
-        // Ridge slope tangent
         const da = 0.03;
         const dh = getMountainHeight(layer, ang + da) - getMountainHeight(layer, ang - da);
         const tx = -Math.sin(ang) + (rand()-0.5)*0.2;
         const ty = (dh / (2 * da * r)) * 2.2 + (rand()-0.5)*0.25;
         const tz = Math.cos(ang) + (rand()-0.5)*0.2;
 
-        let colL, colS, mType = 1;
+        let colL, colS, mType = 7;
         if (layer === 0) {
           colL = [0.09, 0.18, 0.34]; colS = [0.04, 0.08, 0.18];
         } else if (layer === 1) {
           colL = [0.13, 0.25, 0.52]; colS = [0.06, 0.12, 0.28];
         } else {
-          // Layer 3: Snow-capped alpine peaks with feathered snowline & dark rock ridges
-          const snowThreshold = 98 + 14 * Math.sin(ang * 13.0) + 12 * (rand() - 0.5);
-          const isRockRidge = rand() < 0.24 && y < hPeak - 8;
+          const snowThreshold = 265 + 26 * Math.sin(ang * 13.0) + 22 * (rand() - 0.5);
+          const isRockRidge = rand() < 0.24 && y < hPeak - 22;
           if (y > snowThreshold && !isRockRidge) {
-            mType = 7;
-            const snowBlend = smoothstep(snowThreshold, snowThreshold + 24, y);
+            const snowBlend = smoothstep(snowThreshold, snowThreshold + 55, y);
             colL = [mix(0.38, 0.82, snowBlend), mix(0.52, 0.89, snowBlend), mix(0.76, 0.98, snowBlend)];
             colS = [0.18, 0.31, 0.56];
           } else {
-            mType = 7;
             colL = [0.14, 0.26, 0.50]; colS = [0.06, 0.12, 0.28];
           }
         }
 
-        const len = (layer === 0 ? randRange(4.5, 9.0) : (layer === 1 ? randRange(7.5, 14.5) : randRange(11, 22)));
+        const len = (layer === 0 ? randRange(22, 42) : (layer === 1 ? randRange(32, 62) : randRange(44, 86)));
         const wid = len * randRange(0.28, 0.42);
         mtnBatch.push(px, y, pz, len, nx, ny, nz, wid, tx, ty, tz, mType, colL, colS, 0, 0.72);
       }
@@ -1761,244 +1875,235 @@
   }
   const mtnGPU = mtnBatch.upload();
 
-  // 7D. World Static (Terrain, Paths, Sunflowers, Wheat, Windmill Tower, Cottage, Village & Church, Cypresses, Bridges, Cliff, Obstacles)
-  setLoadProgress(48, '正在繪製向日葵花田、麥田、風車與村莊教堂…');
-  const worldCap = Math.round(470000 * strokeBudgetScale);
+  // 7D. Toroidal Streaming Terrain Ring (145m x 145m sliding around camera for lush foreground coverage)
+  const TERRAIN_RING_SPAN = 145.0;
+  const terrRingCap = Math.round(145000 * strokeBudgetScale);
+  const terrRingBatch = new StrokeBatch(terrRingCap + 200);
+  {
+    for (let i = 0; i < terrRingCap; i++) {
+      const gx = (rand() - 0.5) * TERRAIN_RING_SPAN;
+      const gz = (rand() - 0.5) * TERRAIN_RING_SPAN;
+      const len = randRange(2.1, 3.6);
+      const wid = len * randRange(0.55, 0.75);
+      terrRingBatch.push(gx, 0, gz, len, 0, 1, 0, wid, 1, 0, 0, 0, [0.18, 0.34, 0.20], [0.05, 0.11, 0.14], 0, 0.60);
+    }
+  }
+  const terrRingGPU = terrRingBatch.upload();
+
+  // 7E. Open-World Macro Terrain + Biomes + Landmarks + Roads + Bridges + Obstacles
+  setLoadProgress(48, '正在繪製開放世界花田、麥海、雙風車、村莊與月光湖泊…');
+  const worldCap = Math.round(355000 * strokeBudgetScale);
   const worldBatch = new StrokeBatch(worldCap + 20000);
 
-  // 1) Valley Terrain Strokes
+  // 1) Macro Distant Foothills & Rolling Plains (covers entire r = 0m .. 960m valley seamlessly)
   {
-    const nTerr = Math.round(210000 * strokeBudgetScale);
-    for (let i = 0; i < nTerr; i++) {
-      // Importance-sampled radius: denser inside r < 115m, sparser out to 160m
-      const u = rand();
-      const rad = (u < 0.78) ? Math.sqrt(rand()) * 112.0 : mix(112.0, 165.0, rand());
+    const nMacro = Math.round(130000 * strokeBudgetScale);
+    for (let i = 0; i < nMacro; i++) {
+      const rad = mix(0.0, 960.0, Math.pow(rand(), 0.72));
       const ang = rand() * Math.PI * 2;
       const x = rad * Math.cos(ang), z = rad * Math.sin(ang);
+      if (getRiverDistance(x, z) < -3.5) continue;
 
-      // Skip river water core & road center (dedicated dense strokes cover those)
-      if (getRiverDistance(x, z) < -0.5) continue;
-      const pInfo = getPathInfo(x, z);
-      if (pInfo.dist < 2.3) continue;
-      if (getVillageRoadDist(x, z) < 2.0) continue;
-
-      const y = getRawTerrainHeight(x, z);
+      const y = getRawTerrainHeight(x, z, true);
       const n = getTerrainNormal(x, z);
-      const flow = fbm2(x * 0.045, z * 0.045, 2) * Math.PI * 2;
+      const flow = fbm2(x * 0.015, z * 0.015, 2) * Math.PI * 2;
       const tx = Math.cos(flow), tz = Math.sin(flow), ty = -(n[0]*tx + n[2]*tz) / Math.max(n[1], 0.25);
 
       const slope = 1.0 - n[1];
       let colL, colS;
-      if (slope > 0.28 || (x < -73 && Math.abs(z - WATERFALL_POS.z) < 25)) {
-        // Rocky slope / cliff
-        colL = [0.16, 0.22, 0.34]; colS = [0.06, 0.09, 0.17];
+      if (slope > 0.26) {
+        colL = [0.18, 0.24, 0.36]; colS = [0.06, 0.09, 0.18];
       } else {
-        // Meadow greens & deep olive-teal
-        const patch = fbm2(x * 0.04 + 3.1, z * 0.04 + 7.2, 2);
-        colL = [mix(0.14, 0.26, patch), mix(0.28, 0.42, patch), mix(0.18, 0.24, patch)];
+        const patch = 0.5 + 0.5 * Math.sin(x * 0.014 + Math.cos(z * 0.016));
+        colL = [mix(0.14, 0.24, patch), mix(0.28, 0.39, patch), mix(0.18, 0.22, patch)];
         colS = [0.05, 0.11, 0.14];
       }
-
-      const distFactor = smoothstep(55, 160, rad);
-      const len = randRange(1.45, 2.75) * (1.0 + distFactor * 2.5);
-      const wid = len * randRange(0.46, 0.62);
-      worldBatch.push(x, y + 0.04, z, len, n[0], n[1], n[2], wid, tx, ty, tz, 0, colL, colS, 0, 0.60);
+      const distFactor = smoothstep(50, 900, rad);
+      const len = randRange(6.5, 11.5) * (1.0 + distFactor * 3.8);
+      const wid = len * randRange(0.60, 0.78);
+      worldBatch.push(x, y + 0.06, z, len, n[0], n[1], n[2], wid, tx, ty, tz, 1, colL, colS, 0, 0.60);
     }
   }
 
-  // 2) Circular Path & Village Road Strokes
+  // 2) Circular Path & 4 Cross-Country Highways
   {
-    const nPath = Math.round(32000 * strokeBudgetScale);
+    const nPath = Math.round(28000 * strokeBudgetScale);
     for (let i = 0; i < nPath; i++) {
       const s = rand() * totalPathLen;
       const pt = samplePathByS(s);
       const across = (rand() - 0.5) * 5.2;
       const x = pt.x - pt.tz * across;
       const z = pt.z + pt.tx * across;
-      if (getBridgeAt(x, z)) continue; // Bridge deck handles river crossing
+      if (getBridgeAt(x, z)) continue;
       const y = getRawTerrainHeight(x, z);
       const n = getTerrainNormal(x, z);
       const edge = Math.abs(across) / 2.6;
-      const colL = edge > 0.72 ? [0.24, 0.28, 0.24] : [0.42, 0.36, 0.26];
-      const colS = [0.12, 0.14, 0.20];
-      worldBatch.push(x, y + 0.07, z, randRange(0.85, 1.65), n[0], n[1], n[2], randRange(0.36, 0.58), pt.tx, 0.05, pt.tz, 0, colL, colS, 0, 0.68);
+      const colL = edge > 0.72 ? [0.24, 0.28, 0.24] : [0.43, 0.37, 0.26];
+      worldBatch.push(x, y + 0.08, z, randRange(0.85, 1.65), n[0], n[1], n[2], randRange(0.36, 0.58), pt.tx, 0.05, pt.tz, 0, colL, [0.12, 0.14, 0.20], 0, 0.68);
     }
 
-    // Village lane
-    const nVilRoad = Math.round(4500 * strokeBudgetScale);
-    for (let i = 0; i < nVilRoad; i++) {
-      const t = rand();
-      const across = (rand() - 0.5) * 4.2;
-      const ax = 60, az = -6, bx = 104, bz = -16;
-      const dl = Math.hypot(bx - ax, bz - az);
-      const tx = (bx - ax) / dl, tz = (bz - az) / dl;
-      const x = mix(ax, bx, t) - tz * across;
-      const z = mix(az, bz, t) + tx * across;
-      const y = getRawTerrainHeight(x, z);
-      const n = getTerrainNormal(x, z);
-      worldBatch.push(x, y + 0.07, z, randRange(0.8, 1.45), n[0], n[1], n[2], randRange(0.34, 0.54), tx, 0.05, tz, 0, [0.40, 0.36, 0.28], [0.14, 0.16, 0.22], 0, 0.68);
+    for (const arr of extraRoadSamples) {
+      const nRoad = Math.round(arr.length * 46 * strokeBudgetScale);
+      for (let i = 0; i < nRoad; i++) {
+        const pt = arr[Math.floor(rand() * arr.length)];
+        const across = (rand() - 0.5) * 5.4;
+        const x = pt.x - pt.tz * across + (rand() - 0.5) * 2.5;
+        const z = pt.z + pt.tx * across + (rand() - 0.5) * 2.5;
+        if (getBridgeAt(x, z) || getRiverDistance(x, z) < 0.2) continue;
+        const y = getRawTerrainHeight(x, z, true);
+        const n = getTerrainNormal(x, z);
+        worldBatch.push(x, y + 0.08, z, randRange(1.0, 2.0), n[0], n[1], n[2], randRange(0.42, 0.68), pt.tx, 0.05, pt.tz, 1, [0.42, 0.36, 0.26], [0.13, 0.15, 0.21], 0, 0.68);
+      }
     }
   }
 
-  // 3) Sunflower Field (Nighttime bowed heads, ALL facing the same direction!)
+  // 3) Sunflower Fields (Heartland Field + Southern Grand Sunflower Plateau — ALL bowed & facing same direction!)
   {
-    const nFlowers = Math.round(380 * strokeBudgetScale);
-    // Uniform direction: East-Northeast (facing the rising moon), bowed downward at night (~48 deg below horizontal)
     const sfYaw = 0.35;
-    const faceDir = [Math.cos(sfYaw), -0.72, Math.sin(sfYaw)]; // Bowed down!
+    const faceDir = [Math.cos(sfYaw), -0.72, Math.sin(sfYaw)];
     const fNorm = norm3(...faceDir);
     const fRight = norm3(...cross3([0, 1, 0], fNorm));
     const fUp = norm3(...cross3(fNorm, fRight));
 
-    for (let i = 0; i < nFlowers; i++) {
-      const fx = randRange(-36, 24);
-      const fz = randRange(23, 52);
-      if (getPathInfo(fx, fz).dist < 4.0) continue;
-      if (getRiverDistance(fx, fz) < 2.5) continue;
-      if (Math.hypot(fx - COTTAGE_POS.x, fz - COTTAGE_POS.z) < 6.5) continue;
-
+    const paintSunflower = (fx, fz) => {
       const fy = getRawTerrainHeight(fx, fz);
       const h = randRange(1.25, 1.95);
-      // Slight bend near top of stalk for bowed head
       for (let seg = 0; seg < 4; seg++) {
         const t = seg / 4;
         const bend = t * t * 0.24;
-        const sx = fx + Math.cos(sfYaw) * bend;
-        const sy = fy + t * h;
-        const sz = fz + Math.sin(sfYaw) * bend;
-        worldBatch.push(sx, sy + 0.2, sz, 0.42, 0.4, 0.3, 0.8, 0.10, Math.cos(sfYaw)*t*0.5, 1.0, Math.sin(sfYaw)*t*0.5, 0, [0.22, 0.42, 0.18], [0.06, 0.14, 0.10], 0, 0.65);
+        worldBatch.push(fx + Math.cos(sfYaw) * bend, fy + t * h + 0.2, fz + Math.sin(sfYaw) * bend, 0.42, 0.4, 0.3, 0.8, 0.10, Math.cos(sfYaw)*t*0.5, 1.0, Math.sin(sfYaw)*t*0.5, 0, [0.22, 0.42, 0.18], [0.06, 0.14, 0.10], 0, 0.65);
       }
-      // 3 broad leaves
       for (let lf = 0; lf < 3; lf++) {
         const la = rand() * Math.PI * 2;
-        const ly = fy + randRange(0.45, 0.85) * h;
-        worldBatch.push(fx + Math.cos(la)*0.18, ly, fz + Math.sin(la)*0.18, 0.38, 0.1, 0.95, 0.1, 0.20, Math.cos(la), -0.35, Math.sin(la), 0, [0.20, 0.44, 0.18], [0.06, 0.14, 0.10], 0, 0.6);
+        worldBatch.push(fx + Math.cos(la)*0.18, fy + randRange(0.45, 0.85) * h, fz + Math.sin(la)*0.18, 0.38, 0.1, 0.95, 0.1, 0.20, Math.cos(la), -0.35, Math.sin(la), 0, [0.20, 0.44, 0.18], [0.06, 0.14, 0.10], 0, 0.6);
       }
-
-      // Bowed flower head
-      const hx = fx + Math.cos(sfYaw) * 0.26;
-      const hy = fy + h;
-      const hz = fz + Math.sin(sfYaw) * 0.26;
-
-      // Dark brown seed center (3 dabs)
+      const hx = fx + Math.cos(sfYaw) * 0.26, hy = fy + h, hz = fz + Math.sin(sfYaw) * 0.26;
       for (let d = 0; d < 3; d++) {
         const ox = (rand()-0.5)*0.14, oy = (rand()-0.5)*0.14;
-        worldBatch.push(hx + fRight[0]*ox + fUp[0]*oy, hy + fRight[1]*ox + fUp[1]*oy, hz + fRight[2]*ox + fUp[2]*oy,
-          0.22, fNorm[0], fNorm[1], fNorm[2], 0.20, fRight[0], fRight[1], fRight[2], 0, [0.26, 0.15, 0.08], [0.09, 0.06, 0.08], 0, 0.8);
+        worldBatch.push(hx + fRight[0]*ox + fUp[0]*oy, hy + fRight[1]*ox + fUp[1]*oy, hz + fRight[2]*ox + fUp[2]*oy, 0.22, fNorm[0], fNorm[1], fNorm[2], 0.20, fRight[0], fRight[1], fRight[2], 0, [0.26, 0.15, 0.08], [0.09, 0.06, 0.08], 0, 0.8);
       }
-      // 12 golden petals radiating around bowed face
       for (let p = 0; p < 12; p++) {
         const pa = (p / 12) * Math.PI * 2 + randRange(-0.1, 0.1);
         const rx = fRight[0]*Math.cos(pa) + fUp[0]*Math.sin(pa);
         const ry = fRight[1]*Math.cos(pa) + fUp[1]*Math.sin(pa);
         const rz = fRight[2]*Math.cos(pa) + fUp[2]*Math.sin(pa);
         const pColL = (p % 2 === 0) ? [0.95, 0.74, 0.16] : [0.88, 0.62, 0.12];
-        const pColS = [0.42, 0.30, 0.10];
-        worldBatch.push(hx + rx*0.21, hy + ry*0.21, hz + rz*0.21, 0.28, fNorm[0], fNorm[1], fNorm[2], 0.11, rx, ry, rz, 0, pColL, pColS, 0, 0.75);
+        worldBatch.push(hx + rx*0.21, hy + ry*0.21, hz + rz*0.21, 0.28, fNorm[0], fNorm[1], fNorm[2], 0.11, rx, ry, rz, 0, pColL, [0.42, 0.30, 0.10], 0, 0.75);
       }
+    };
+
+    const nHeartSF = Math.round(380 * strokeBudgetScale);
+    for (let i = 0; i < nHeartSF; i++) {
+      const fx = randRange(-36, 24), fz = randRange(23, 52);
+      if (getPathInfo(fx, fz).dist < 4.0 || getRiverDistance(fx, fz) < 2.5) continue;
+      if (Math.hypot(fx - COTTAGE_POS.x, fz - COTTAGE_POS.z) < 6.5) continue;
+      paintSunflower(fx, fz);
+    }
+
+    // Southern Grand Sunflower Plateau
+    const nSouthSF = Math.round(540 * strokeBudgetScale);
+    for (let i = 0; i < nSouthSF; i++) {
+      const fx = randRange(-95, -5), fz = randRange(230, 330);
+      if (Math.hypot(fx + 46, fz - 285) > 56) continue;
+      paintSunflower(fx, fz);
     }
   }
 
-  // 4) Swaying Wheat Field
+  // 4) Swaying Wheat Fields (Heartland + Vast East Plains around Windmill 2)
   {
-    const nWheat = Math.round(40000 * strokeBudgetScale);
-    for (let i = 0; i < nWheat; i++) {
-      const wx = randRange(-40, 26);
-      const wz = randRange(-50, -14);
-      if (getPathInfo(wx, wz).dist < 3.6) continue;
-      if (Math.hypot(wx - WINDMILL_POS.x, wz - WINDMILL_POS.z) < 7.5) continue;
-      const wy = getRawTerrainHeight(wx, wz);
-      const h = randRange(0.75, 1.30);
-      const isEar = rand() < 0.42;
-      const colL = isEar ? [0.88, 0.68, 0.24] : [0.58, 0.48, 0.20];
-      const colS = [0.20, 0.20, 0.14];
-      worldBatch.push(wx, wy + h * (isEar ? 0.85 : 0.45), wz, isEar ? 0.34 : h * 0.85, 0.3, 0.3, 0.9, isEar ? 0.12 : 0.08, (rand()-0.5)*0.25, 1.0, (rand()-0.5)*0.25, 3, colL, colS, 0, 0.7);
+    const nWheat1 = Math.round(34000 * strokeBudgetScale);
+    for (let i = 0; i < nWheat1; i++) {
+      const wx = randRange(-40, 26), wz = randRange(-50, -14);
+      if (getPathInfo(wx, wz).dist < 3.6 || Math.hypot(wx - WINDMILL_POS.x, wz - WINDMILL_POS.z) < 7.5) continue;
+      const wy = getRawTerrainHeight(wx, wz), h = randRange(0.75, 1.30), isEar = rand() < 0.42;
+      worldBatch.push(wx, wy + h * (isEar ? 0.85 : 0.45), wz, isEar ? 0.34 : h * 0.85, 0.3, 0.3, 0.9, isEar ? 0.12 : 0.08, (rand()-0.5)*0.25, 1.0, (rand()-0.5)*0.25, 3, isEar ? [0.88, 0.68, 0.24] : [0.58, 0.48, 0.20], [0.20, 0.20, 0.14], 0, 0.7);
+    }
+
+    const nWheat2 = Math.round(38000 * strokeBudgetScale);
+    for (let i = 0; i < nWheat2; i++) {
+      const wx = randRange(155, 295), wz = randRange(-245, -110);
+      if (Math.hypot(wx - WINDMILL2_POS.x, wz - WINDMILL2_POS.z) < 9.5) continue;
+      const wy = getRawTerrainHeight(wx, wz, true), h = randRange(0.85, 1.45), isEar = rand() < 0.44;
+      worldBatch.push(wx, wy + h * (isEar ? 0.85 : 0.45), wz, isEar ? 0.40 : h * 0.90, 0.3, 0.3, 0.9, isEar ? 0.15 : 0.10, (rand()-0.5)*0.25, 1.0, (rand()-0.5)*0.25, 3, isEar ? [0.88, 0.68, 0.24] : [0.58, 0.48, 0.20], [0.20, 0.20, 0.14], 0, 0.7);
     }
   }
 
-  // 5) Rotating Windmill Tower (Static stone body + glowing window; sails in separate animated batch)
-  const WINDMILL_BASE_Y = getRawTerrainHeight(WINDMILL_POS.x, WINDMILL_POS.z);
-  const WINDMILL_HUB = { x: WINDMILL_POS.x, y: WINDMILL_BASE_Y + 9.2, z: WINDMILL_POS.z + 3.0 };
-  {
-    paintCylinder(worldBatch, WINDMILL_POS.x, WINDMILL_BASE_Y - 0.5, WINDMILL_POS.z, 3.3, 2.3, 10.5, 1, [0.52, 0.46, 0.40], [0.18, 0.20, 0.30], 26, false);
-    paintCylinder(worldBatch, WINDMILL_POS.x, WINDMILL_BASE_Y + 9.8, WINDMILL_POS.z, 2.6, 0.25, 3.2, 1, [0.36, 0.24, 0.20], [0.12, 0.10, 0.18], 26, true);
-    // Warm glowing windmill windows (matType 8 = crisp world emissive)
-    paintBox(worldBatch, WINDMILL_POS.x + 0.1, WINDMILL_BASE_Y + 4.4, WINDMILL_POS.z + 2.85, 1.1, 1.3, 0.3, 0, 8, [1.0, 0.78, 0.28], [0.95, 0.55, 0.12], 32, 0.95, 0.38, 0.22);
-    paintBox(worldBatch, WINDMILL_POS.x, WINDMILL_BASE_Y + 1.3, WINDMILL_POS.z + 3.2, 1.3, 2.2, 0.3, 0, 1, [0.38, 0.22, 0.12], [0.16, 0.10, 0.08], 22);
+  // 5) Two Rotating Windmill Towers (Hubs stored in windmillHubs for animated sails)
+  const windmillHubs = [];
+  for (const wm of [WINDMILL_POS, WINDMILL2_POS]) {
+    const wy = getRawTerrainHeight(wm.x, wm.z);
+    windmillHubs.push({ x: wm.x, y: wy + 9.2, z: wm.z + 3.0 });
+    paintCylinder(worldBatch, wm.x, wy - 0.5, wm.z, 3.3, 2.3, 10.5, 1, [0.52, 0.46, 0.40], [0.18, 0.20, 0.30], 24, false);
+    paintCylinder(worldBatch, wm.x, wy + 9.8, wm.z, 2.6, 0.25, 3.2, 1, [0.36, 0.24, 0.20], [0.12, 0.10, 0.18], 24, true);
+    paintBox(worldBatch, wm.x + 0.1, wy + 4.4, wm.z + 2.85, 1.1, 1.3, 0.3, 0, 8, [1.0, 0.78, 0.28], [0.95, 0.55, 0.12], 30, 0.95, 0.38, 0.22);
+    paintBox(worldBatch, wm.x, wy + 1.3, wm.z + 3.2, 1.3, 2.2, 0.3, 0, 1, [0.38, 0.22, 0.12], [0.16, 0.10, 0.08], 20);
   }
 
-  // 6) Lit-Window Cottage by the Path & Sunflowers
+  // 6) Lit-Window Cottage by Heartland Path
   {
     const cy = getRawTerrainHeight(COTTAGE_POS.x, COTTAGE_POS.z);
-    const yaw = 0.48;
-    // Stone walls
+    const yaw = 0.48, c = Math.cos(yaw), s = Math.sin(yaw);
     paintBox(worldBatch, COTTAGE_POS.x, cy + 1.8, COTTAGE_POS.z, 6.2, 3.6, 4.8, yaw, 1, [0.58, 0.52, 0.44], [0.18, 0.22, 0.32], 24);
-    // Pitched roof (2 sloped planes)
-    const c = Math.cos(yaw), s = Math.sin(yaw);
     for (let side of [-1, 1]) {
-      const nSide = Math.round(900 * strokeBudgetScale);
+      const nSide = Math.round(850 * strokeBudgetScale);
       for (let i = 0; i < nSide; i++) {
-        const u = (rand() - 0.5) * 6.8;
-        const v = rand();
-        const lx = u;
-        const ly = 3.5 + (1 - v) * 2.3;
-        const lz = side * v * 2.9;
-        const wx = COTTAGE_POS.x + lx * c + lz * s;
-        const wz = COTTAGE_POS.z - lx * s + lz * c;
-        const nx = (side * 0.65) * s, ny = 0.76, nz = (side * 0.65) * c;
-        worldBatch.push(wx, cy + ly, wz, randRange(0.5, 0.9), nx, ny, nz, randRange(0.24, 0.40), c, 0, -s, 1, [0.46, 0.24, 0.18], [0.14, 0.10, 0.16], 0, 0.75);
+        const u = (rand() - 0.5) * 6.8, v = rand();
+        const lx = u, ly = 3.5 + (1 - v) * 2.3, lz = side * v * 2.9;
+        worldBatch.push(COTTAGE_POS.x + lx * c + lz * s, cy + ly, COTTAGE_POS.z - lx * s + lz * c, randRange(0.5, 0.9), (side * 0.65) * s, 0.76, (side * 0.65) * c, randRange(0.24, 0.40), c, 0, -s, 1, [0.46, 0.24, 0.18], [0.14, 0.10, 0.16], 0, 0.75);
       }
     }
-    // Chimney + curling smoke strokes
-    paintBox(worldBatch, COTTAGE_POS.x - 1.6*c, cy + 5.6, COTTAGE_POS.z + 1.6*s, 0.9, 1.8, 0.9, yaw, 1, [0.42, 0.36, 0.34], [0.14, 0.15, 0.22], 24);
-    for (let k = 0; k < Math.round(80 * strokeBudgetScale); k++) {
-      const t = k / 80;
+    paintBox(worldBatch, COTTAGE_POS.x - 1.6*c, cy + 5.6, COTTAGE_POS.z + 1.6*s, 0.9, 1.8, 0.9, yaw, 1, [0.42, 0.36, 0.34], [0.14, 0.15, 0.22], 22);
+    for (let k = 0; k < Math.round(70 * strokeBudgetScale); k++) {
+      const t = k / 70;
       worldBatch.push(COTTAGE_POS.x - 1.6*c + Math.sin(t*5)*0.6, cy + 6.7 + t * 5.2, COTTAGE_POS.z + 1.6*s + t * 1.4, randRange(0.6, 1.2), 0.3, 0.4, 0.85, randRange(0.3, 0.55), 0.2, 1.0, 0.25, 3, [0.45, 0.52, 0.65], [0.18, 0.24, 0.38], 0, 0.4);
     }
-    // Glowing warm windows & door (matType 8)
-    paintBox(worldBatch, COTTAGE_POS.x + 1.4*c + 2.42*s, cy + 2.0, COTTAGE_POS.z - 1.4*s + 2.42*c, 1.2, 1.2, 0.2, yaw, 8, [1.0, 0.80, 0.28], [0.95, 0.56, 0.12], 38, 0.96, 0.32, 0.22);
-    paintBox(worldBatch, COTTAGE_POS.x - 1.6*c + 2.42*s, cy + 2.0, COTTAGE_POS.z + 1.6*s + 2.42*c, 1.2, 1.2, 0.2, yaw, 8, [1.0, 0.78, 0.26], [0.95, 0.54, 0.12], 38, 0.96, 0.32, 0.22);
-    paintBox(worldBatch, COTTAGE_POS.x + 3.12*c, cy + 1.4, COTTAGE_POS.z - 3.12*s, 0.25, 2.2, 1.1, yaw, 8, [0.95, 0.64, 0.20], [0.55, 0.32, 0.10], 30, 0.75, 0.35, 0.22);
+    paintBox(worldBatch, COTTAGE_POS.x + 1.4*c + 2.42*s, cy + 2.0, COTTAGE_POS.z - 1.4*s + 2.42*c, 1.2, 1.2, 0.2, yaw, 8, [1.0, 0.80, 0.28], [0.95, 0.56, 0.12], 36, 0.96, 0.32, 0.22);
+    paintBox(worldBatch, COTTAGE_POS.x - 1.6*c + 2.42*s, cy + 2.0, COTTAGE_POS.z + 1.6*s + 2.42*c, 1.2, 1.2, 0.2, yaw, 8, [1.0, 0.78, 0.26], [0.95, 0.54, 0.12], 36, 0.96, 0.32, 0.22);
+    paintBox(worldBatch, COTTAGE_POS.x + 3.12*c, cy + 1.4, COTTAGE_POS.z - 3.12*s, 0.25, 2.2, 1.1, yaw, 8, [0.95, 0.64, 0.20], [0.55, 0.32, 0.10], 28, 0.75, 0.35, 0.22);
   }
 
-  // 7) Village & Tall Church Steeple
+  // 7) Church Village + Moonlit Lakeside Hamlet + Hilltop Watchtower Ruin
   {
     const chy = getRawTerrainHeight(CHURCH_POS.x, CHURCH_POS.z);
-    // Church nave
     paintBox(worldBatch, CHURCH_POS.x, chy + 3.8, CHURCH_POS.z, 7.5, 7.6, 12.0, 0.15, 1, [0.48, 0.50, 0.60], [0.16, 0.20, 0.34], 20);
-    // Bell tower base
-    paintBox(worldBatch, CHURCH_POS.x, chy + 9.5, CHURCH_POS.z - 4.2, 4.4, 8.0, 4.4, 0.15, 1, [0.46, 0.48, 0.58], [0.16, 0.20, 0.32], 24);
-    // Iconic tall pointed Church Steeple piercing skyward (~28m total height!)
-    paintCylinder(worldBatch, CHURCH_POS.x, chy + 13.5, CHURCH_POS.z - 4.2, 2.35, 0.14, 15.5, 1, [0.24, 0.30, 0.48], [0.08, 0.12, 0.24], 32, true);
-    // Glowing church lancet windows (matType 8)
-    paintBox(worldBatch, CHURCH_POS.x - 3.8, chy + 3.8, CHURCH_POS.z, 0.25, 3.2, 1.4, 0.15, 8, [1.0, 0.82, 0.34], [0.95, 0.58, 0.14], 40, 0.98, 0.35, 0.22);
-    paintBox(worldBatch, CHURCH_POS.x, chy + 9.8, CHURCH_POS.z - 6.45, 1.1, 2.4, 0.25, 0.15, 8, [1.0, 0.80, 0.30], [0.95, 0.56, 0.14], 40, 0.98, 0.35, 0.22);
+    paintBox(worldBatch, CHURCH_POS.x, chy + 9.5, CHURCH_POS.z - 4.2, 4.4, 8.0, 4.4, 0.15, 1, [0.46, 0.48, 0.58], [0.16, 0.20, 0.32], 22);
+    paintCylinder(worldBatch, CHURCH_POS.x, chy + 13.5, CHURCH_POS.z - 4.2, 2.35, 0.14, 15.5, 1, [0.24, 0.30, 0.48], [0.08, 0.12, 0.24], 30, true);
+    paintBox(worldBatch, CHURCH_POS.x - 3.8, chy + 3.8, CHURCH_POS.z, 0.25, 3.2, 1.4, 0.15, 8, [1.0, 0.82, 0.34], [0.95, 0.58, 0.14], 38, 0.98, 0.35, 0.22);
+    paintBox(worldBatch, CHURCH_POS.x, chy + 9.8, CHURCH_POS.z - 6.45, 1.1, 2.4, 0.25, 0.15, 8, [1.0, 0.80, 0.30], [0.95, 0.56, 0.14], 38, 0.98, 0.35, 0.22);
 
-    // Surrounding village cottages with glowing windows
-    for (const vh of VILLAGE_HOUSES) {
-      const hy = getRawTerrainHeight(vh.x, vh.z);
-      paintBox(worldBatch, vh.x, hy + vh.h * 0.5, vh.z, vh.w, vh.h, vh.d, vh.yaw, 1, [0.46, 0.44, 0.42], [0.14, 0.18, 0.28], 18);
-      // Pitched roof
-      const c = Math.cos(vh.yaw), s = Math.sin(vh.yaw);
-      for (let side of [-1, 1]) {
-        const nr = Math.round(280 * strokeBudgetScale);
-        for (let i = 0; i < nr; i++) {
-          const u = (rand() - 0.5) * (vh.w + 0.6);
-          const v = rand();
-          const lx = u, ly = vh.h - 0.1 + (1 - v) * 1.9, lz = side * v * (vh.d * 0.58);
-          const wx = vh.x + lx*c + lz*s, wz = vh.z - lx*s + lz*c;
-          worldBatch.push(wx, hy + ly, wz, randRange(0.45, 0.85), side*0.6*s, 0.8, side*0.6*c, randRange(0.22, 0.38), c, 0, -s, 1, [0.38, 0.22, 0.20], [0.12, 0.10, 0.18], 0, 0.72);
+    const paintHouseList = (list) => {
+      for (const vh of list) {
+        const hy = getRawTerrainHeight(vh.x, vh.z);
+        paintBox(worldBatch, vh.x, hy + vh.h * 0.5, vh.z, vh.w, vh.h, vh.d, vh.yaw, 1, [0.46, 0.44, 0.42], [0.14, 0.18, 0.28], 16);
+        const c = Math.cos(vh.yaw), s = Math.sin(vh.yaw);
+        for (let side of [-1, 1]) {
+          const nr = Math.round(240 * strokeBudgetScale);
+          for (let i = 0; i < nr; i++) {
+            const u = (rand() - 0.5) * (vh.w + 0.6), v = rand();
+            const lx = u, ly = vh.h - 0.1 + (1 - v) * 1.9, lz = side * v * (vh.d * 0.58);
+            worldBatch.push(vh.x + lx*c + lz*s, hy + ly, vh.z - lx*s + lz*c, randRange(0.45, 0.85), side*0.6*s, 0.8, side*0.6*c, randRange(0.22, 0.38), c, 0, -s, 1, [0.38, 0.22, 0.20], [0.12, 0.10, 0.18], 0, 0.72);
+          }
         }
+        paintBox(worldBatch, vh.x + (vh.d*0.51)*s, hy + vh.h*0.52, vh.z + (vh.d*0.51)*c, 1.0, 1.0, 0.2, vh.yaw, 8, [1.0, 0.78, 0.28], [0.95, 0.55, 0.12], 30, 0.95, 0.32, 0.22);
       }
-      // Warm window on front/side (matType 8)
-      paintBox(worldBatch, vh.x + (vh.d*0.51)*s, hy + vh.h*0.52, vh.z + (vh.d*0.51)*c, 1.0, 1.0, 0.2, vh.yaw, 8, [1.0, 0.78, 0.28], [0.95, 0.55, 0.12], 32, 0.95, 0.32, 0.22);
-    }
+    };
+    paintHouseList(VILLAGE_HOUSES);
+    paintHouseList(LAKE_HOUSES);
+
+    // Wooden Pier jutting into Moonlit Lake
+    paintBox(worldBatch, 286, WATER_Y + 0.65, 52, 3.2, 0.4, 24.0, 0.05, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 18);
+    paintBox(worldBatch, 286, WATER_Y + 2.1, 63, 0.35, 1.5, 0.35, 0, 8, [1.0, 0.80, 0.30], [0.95, 0.56, 0.14], 24, 0.95);
+
+    // Hilltop Watchtower Ruin + Warm Brazier
+    const ty = getRawTerrainHeight(WATCHTOWER_POS.x, WATCHTOWER_POS.z);
+    paintCylinder(worldBatch, WATCHTOWER_POS.x, ty - 0.5, WATCHTOWER_POS.z, 3.8, 3.2, 12.5, 1, [0.44, 0.44, 0.50], [0.14, 0.16, 0.26], 24, false);
+    paintBox(worldBatch, WATCHTOWER_POS.x, ty + 12.6, WATCHTOWER_POS.z, 1.6, 1.2, 1.6, 0, 8, [1.0, 0.74, 0.22], [0.96, 0.44, 0.10], 32, 0.98);
   }
 
-  // 8) Cypresses (Hero foreground cypress + 22 valley/village cypresses)
+  // 8) Cypresses & Northern Cypress/Olive Grove (65+ trees across open world)
   {
     const cypressSpots = [
-      { x: -46, z: -34, h: 20.5, r: 2.3 }, // Giant Van Gogh Hero Cypress
+      { x: -46, z: -34, h: 20.5, r: 2.3 },
       { x: -34, z:  44, h: 12.5, r: 1.5 },
       { x: -16, z:  54, h: 11.0, r: 1.4 },
       { x:  28, z: -48, h: 13.5, r: 1.6 },
@@ -2012,18 +2117,23 @@
       { x: -64, z:  32, h: 14.0, r: 1.7 },
       { x: -66, z: -18, h: 15.0, r: 1.8 }
     ];
-    for (let k = 0; k < 10; k++) {
-      const a = rand() * Math.PI * 2, r = randRange(74, 108);
+    // Northern Cypress & Olive Grove Valley around (-90, -280)
+    for (let k = 0; k < 28; k++) {
+      const x = -90 + randRange(-85, 85), z = -280 + randRange(-85, 85);
+      cypressSpots.push({ x, z, h: randRange(12, 22), r: randRange(1.4, 2.3) });
+    }
+    // Scattered open-world cypresses across hills & lakeside
+    for (let k = 0; k < 28; k++) {
+      const a = rand() * Math.PI * 2, r = randRange(120, 620);
       const x = r * Math.cos(a), z = r * Math.sin(a);
-      if (getRiverDistance(x, z) > 4) cypressSpots.push({ x, z, h: randRange(9, 14.5), r: randRange(1.1, 1.7) });
+      if (getRiverDistance(x, z) > 8) cypressSpots.push({ x, z, h: randRange(10, 17), r: randRange(1.2, 2.0) });
     }
 
     for (const cyTree of cypressSpots) {
-      const by = getRawTerrainHeight(cyTree.x, cyTree.z);
-      const nFol = Math.round(cyTree.h * 110 * strokeBudgetScale);
+      const by = getRawTerrainHeight(cyTree.x, cyTree.z, true);
+      const nFol = Math.round(cyTree.h * 90 * strokeBudgetScale);
       for (let i = 0; i < nFol; i++) {
         const t = rand();
-        // Sinuous Van Gogh flame silhouette
         const prof = Math.sin(Math.pow(t, 0.72) * Math.PI) * (1.0 - 0.28 * t) + 0.14 * (1 - t);
         const rad = cyTree.r * prof * (0.35 + 0.65 * Math.sqrt(rand()));
         const swayX = Math.sin(t * 7.5) * 0.25 * cyTree.r;
@@ -2031,73 +2141,58 @@
         const px = cyTree.x + swayX + Math.cos(swirl) * rad;
         const py = by + 0.6 + t * cyTree.h;
         const pz = cyTree.z + Math.sin(swirl) * rad;
-        const nx = Math.cos(swirl), nz = Math.sin(swirl);
-        // Flame-curling tangents
         const curl = Math.sin(t * 9.0 + swirl) * 0.55;
-        const tx = -Math.sin(swirl) * 0.75 + curl * 0.3, ty = 0.85, tz = Math.cos(swirl) * 0.75;
-        const colL = [0.08, 0.24, 0.17];
-        const colS = [0.02, 0.06, 0.11];
-        worldBatch.push(px, py, pz, randRange(0.55, 1.15), nx, 0.3, nz, randRange(0.18, 0.33), tx, ty, tz, 1, colL, colS, 0, 0.85);
+        worldBatch.push(px, py, pz, randRange(0.55, 1.15), Math.cos(swirl), 0.3, Math.sin(swirl), randRange(0.18, 0.33), -Math.sin(swirl) * 0.75 + curl * 0.3, 0.85, Math.cos(swirl) * 0.75, 1, [0.08, 0.24, 0.17], [0.02, 0.06, 0.11], 0, 0.85);
       }
     }
   }
 
-  // 9) Two Arched Stone Bridges
+  // 9) Four Arched Stone Bridges
   for (const b of bridges) {
-    const nDeck = Math.round(3600 * strokeBudgetScale);
+    const nDeck = Math.round(2800 * strokeBudgetScale);
     for (let i = 0; i < nDeck; i++) {
       const along = (rand() - 0.5) * 2 * b.halfLen;
       const across = (rand() - 0.5) * 2 * b.halfWidth;
       const u = Math.abs(along) / b.halfLen;
       const y = WATER_Y + 1.35 + b.archRise * Math.pow(Math.cos(u * Math.PI * 0.5), 1.35);
-      const wx = b.x + along * b.tx - across * b.tz;
-      const wz = b.z + along * b.tz + across * b.tx;
-      worldBatch.push(wx, y + 0.04, wz, randRange(0.6, 1.15), 0, 1, 0, randRange(0.26, 0.42), b.tx, 0, b.tz, 1, [0.44, 0.44, 0.48], [0.16, 0.18, 0.28], 0, 0.78);
+      worldBatch.push(b.x + along * b.tx - across * b.tz, y + 0.04, b.z + along * b.tz + across * b.tx, randRange(0.6, 1.15), 0, 1, 0, randRange(0.26, 0.42), b.tx, 0, b.tz, 1, [0.44, 0.44, 0.48], [0.16, 0.18, 0.28], 0, 0.78);
     }
-    // Side arch masonry & stone parapets
-    const nWall = Math.round(3200 * strokeBudgetScale);
+    const nWall = Math.round(2400 * strokeBudgetScale);
     for (let side of [-1, 1]) {
       for (let i = 0; i < nWall / 2; i++) {
         const along = (rand() - 0.5) * 2 * b.halfLen;
         const u = Math.abs(along) / b.halfLen;
         const deckY = WATER_Y + 1.35 + b.archRise * Math.pow(Math.cos(u * Math.PI * 0.5), 1.35);
         const y = mix(WATER_Y - 0.6, deckY + 0.95, rand());
-        const across = side * b.halfWidth;
-        const wx = b.x + along * b.tx - across * b.tz;
-        const wz = b.z + along * b.tz + across * b.tx;
-        // Cut arch opening under deck near center
         if (y < deckY - 0.55 && Math.abs(along) < b.halfLen * 0.62) continue;
-        worldBatch.push(wx, y, wz, randRange(0.6, 1.1), -side*b.tz, 0.15, side*b.tx, randRange(0.28, 0.46), b.tx, (rand()-0.5)*0.2, b.tz, 1, [0.40, 0.42, 0.48], [0.14, 0.17, 0.28], 0, 0.8);
+        const across = side * b.halfWidth;
+        worldBatch.push(b.x + along * b.tx - across * b.tz, y, b.z + along * b.tz + across * b.tx, randRange(0.6, 1.1), -side*b.tz, 0.15, side*b.tx, randRange(0.28, 0.46), b.tx, (rand()-0.5)*0.2, b.tz, 1, [0.40, 0.42, 0.48], [0.14, 0.17, 0.28], 0, 0.8);
       }
     }
   }
 
-  // 10) Waterfall Rocky Cliff Face & Boulders
+  // 10) Grand Waterfall Rocky Cliff Face (-168, WATERFALL_POS.z)
   {
-    const nCliff = Math.round(22000 * strokeBudgetScale);
+    const nCliff = Math.round(24000 * strokeBudgetScale);
     for (let i = 0; i < nCliff; i++) {
-      const z = WATERFALL_POS.z + randRange(-26, 26);
-      const y = randRange(WATER_Y - 0.5, 25.5);
-      const xBase = mix(-77.5, -87.0, clamp(y / 25.0, 0, 1)) + (fbm2(z * 0.15, y * 0.15, 3) - 0.5) * 3.5;
-      const colL = [0.22, 0.28, 0.42];
-      const colS = [0.06, 0.09, 0.18];
-      worldBatch.push(xBase, y, z, randRange(1.2, 2.6), 0.9, 0.28, (rand()-0.5)*0.4, randRange(0.5, 1.1), (rand()-0.5)*0.4, 0.85, (rand()-0.5)*0.6, 1, colL, colS, 0, 0.85);
+      const z = WATERFALL_POS.z + randRange(-38, 38);
+      const y = randRange(WATER_Y - 0.5, 31.0);
+      const xBase = mix(-163.0, -175.0, clamp(y / 30.0, 0, 1)) + (fbm2(z * 0.12, y * 0.12, 3) - 0.5) * 4.5;
+      worldBatch.push(xBase, y, z, randRange(1.4, 3.0), 0.9, 0.28, (rand()-0.5)*0.4, randRange(0.6, 1.2), (rand()-0.5)*0.4, 0.85, (rand()-0.5)*0.6, 1, [0.22, 0.28, 0.42], [0.06, 0.09, 0.18], 0, 0.85);
     }
   }
 
-  // 11) Jumpable Obstacles along Path (Wooden Fences, Stone Walls, Fallen Logs)
+  // 11) 16 Jumpable Obstacles (Wooden Fences, Stone Walls, Fallen Logs)
   for (const ob of obstacles) {
     if (ob.type === 'fence') {
-      // Two upright posts + two horizontal rails spanning the path
-      paintBox(worldBatch, ob.x - ob.tz*2.6, ob.y + 0.6, ob.z + ob.tx*2.6, 0.3, 1.3, 0.3, ob.yaw, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 26);
-      paintBox(worldBatch, ob.x + ob.tz*2.6, ob.y + 0.6, ob.z - ob.tx*2.6, 0.3, 1.3, 0.3, ob.yaw, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 26);
-      paintBox(worldBatch, ob.x, ob.y + 0.52, ob.z, 5.6, 0.22, 0.18, ob.yaw, 1, [0.54, 0.38, 0.22], [0.18, 0.14, 0.14], 26);
-      paintBox(worldBatch, ob.x, ob.y + 0.96, ob.z, 5.6, 0.22, 0.18, ob.yaw, 1, [0.56, 0.40, 0.24], [0.18, 0.14, 0.14], 26);
+      paintBox(worldBatch, ob.x - ob.tz*2.6, ob.y + 0.6, ob.z + ob.tx*2.6, 0.3, 1.3, 0.3, ob.yaw, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 24);
+      paintBox(worldBatch, ob.x + ob.tz*2.6, ob.y + 0.6, ob.z - ob.tx*2.6, 0.3, 1.3, 0.3, ob.yaw, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 24);
+      paintBox(worldBatch, ob.x, ob.y + 0.52, ob.z, 5.6, 0.22, 0.18, ob.yaw, 1, [0.54, 0.38, 0.22], [0.18, 0.14, 0.14], 24);
+      paintBox(worldBatch, ob.x, ob.y + 0.96, ob.z, 5.6, 0.22, 0.18, ob.yaw, 1, [0.56, 0.40, 0.24], [0.18, 0.14, 0.14], 24);
     } else if (ob.type === 'stoneWall') {
-      paintBox(worldBatch, ob.x, ob.y + 0.48, ob.z, 5.6, 0.96, 0.72, ob.yaw, 1, [0.46, 0.48, 0.54], [0.15, 0.18, 0.28], 26);
+      paintBox(worldBatch, ob.x, ob.y + 0.48, ob.z, 5.6, 0.96, 0.72, ob.yaw, 1, [0.46, 0.48, 0.54], [0.15, 0.18, 0.28], 24);
     } else {
-      // Fallen log
-      const nLog = Math.round(600 * strokeBudgetScale);
+      const nLog = Math.round(520 * strokeBudgetScale);
       for (let i = 0; i < nLog; i++) {
         const along = (rand() - 0.5) * 5.6;
         const ang = rand() * Math.PI * 2;
@@ -2106,117 +2201,106 @@
         const wz = ob.z + ob.tx * along + ob.tz * Math.cos(ang) * r;
         const wy = ob.y + r + Math.sin(ang) * r;
         const isMoss = Math.sin(ang) > 0.35 && rand() < 0.4;
-        const colL = isMoss ? [0.22, 0.38, 0.20] : [0.42, 0.26, 0.16];
-        const colS = [0.12, 0.10, 0.12];
-        worldBatch.push(wx, wy, wz, randRange(0.45, 0.85), ob.tx*Math.cos(ang), Math.sin(ang), ob.tz*Math.cos(ang), randRange(0.16, 0.26), -ob.tz, 0.05, ob.tx, 1, colL, colS, 0, 0.78);
+        worldBatch.push(wx, wy, wz, randRange(0.45, 0.85), ob.tx*Math.cos(ang), Math.sin(ang), ob.tz*Math.cos(ang), randRange(0.16, 0.26), -ob.tz, 0.05, ob.tx, 1, isMoss ? [0.22, 0.38, 0.20] : [0.42, 0.26, 0.16], [0.12, 0.10, 0.12], 0, 0.78);
       }
     }
   }
   const worldGPU = worldBatch.upload();
 
-  // 7E. River Water Surface (Animated ripples + live FBO reflection)
-  setLoadProgress(72, '正在鋪設河面倒影與瀑布水花…');
-  const riverCap = Math.round(38000 * strokeBudgetScale);
+  // 7F. Expanded River & Moonlit Lake Water Surface (Animated ripples + live FBO reflection)
+  setLoadProgress(72, '正在鋪設千里長河、月光湖泊與大瀑布…');
+  const riverCap = Math.round(72000 * strokeBudgetScale);
   const riverBatch = new StrokeBatch(riverCap + 1000);
   {
     for (let i = 0; i < riverCap; i++) {
-      const rx = randRange(-76, 175);
+      // Importance-sample central valley, Moonlit Lake (smooth bell falloff), and distant reaches
+      const u = rand();
+      const rx = (u < 0.34) ? clamp(310 + (rand() + rand() - 1.0) * 115, -166, 880)
+               : ((u < 0.70) ? randRange(-166, 460) : randRange(460, 880));
       const rzCenter = getRiverCenterZ(rx);
       const hw = getRiverHalfWidth(rx);
-      const rz = rzCenter + (rand() - 0.5) * 2.0 * hw * 0.96;
+      const rz = rzCenter + (rand() - 0.5) * 2.0 * hw * 0.98;
       const dx = 0.5;
       const dz = getRiverCenterZ(rx + dx) - rzCenter;
       const dl = Math.hypot(dx, dz) || 1;
-      riverBatch.push(rx, WATER_Y, rz, randRange(1.4, 2.8), 0, 1, 0, randRange(0.35, 0.65), dx/dl, 0, dz/dl, 5, [0.14, 0.34, 0.58], [0.05, 0.14, 0.30], 0, 0.65);
+      const isLake = Math.abs(rx - 310) < 95;
+      const len = isLake ? randRange(3.6, 6.4) : randRange(1.8, 3.4);
+      const wid = isLake ? randRange(1.3, 2.3) : randRange(0.48, 0.85);
+      riverBatch.push(rx, WATER_Y, rz, len, 0, 1, 0, wid, dx/dl, 0, dz/dl, 5, [0.14, 0.34, 0.58], [0.05, 0.14, 0.30], 0, 0.65);
     }
   }
   const riverGPU = riverBatch.upload();
 
-  // 7F. Waterfall & Pool Mist
-  const wfCap = Math.round(12000 * strokeBudgetScale);
+  // 7G. Grand Cliff Waterfall & Pool Mist
+  const wfCap = Math.round(14000 * strokeBudgetScale);
   const wfBatch = new StrokeBatch(wfCap + 500);
   {
-    const streams = [-4.2, -1.4, 1.5, 4.1];
+    const streams = [-5.8, -2.0, 1.8, 5.5];
     for (let i = 0; i < wfCap; i++) {
       const isMist = rand() < 0.18;
       if (isMist) {
-        const z = WATERFALL_POS.z + randRange(-8.5, 8.5);
-        const x = -71.5 + randRange(-2.5, 4.0);
-        wfBatch.push(x, WATER_Y + 0.5, z, randRange(0.9, 1.7), 0.7, 0.6, 0.2, randRange(0.45, 0.85), 1, 0.3, 0, 4, [0.58, 0.78, 0.92], [0.18, 0.38, 0.62], 0.08, 0.45);
+        const z = WATERFALL_POS.z + randRange(-10.5, 10.5);
+        const x = -155.0 + randRange(-3.0, 4.5);
+        wfBatch.push(x, WATER_Y + 0.6, z, randRange(1.0, 2.0), 0.7, 0.6, 0.2, randRange(0.55, 0.95), 1, 0.3, 0, 4, [0.58, 0.78, 0.92], [0.18, 0.38, 0.62], 0.08, 0.45);
       } else {
         const streamOff = streams[i % streams.length];
-        const z = WATERFALL_POS.z + streamOff + randRange(-1.25, 1.25);
+        const z = WATERFALL_POS.z + streamOff + randRange(-1.5, 1.5);
         const isFoam = rand() < 0.42;
-        const colL = isFoam ? [0.68, 0.86, 0.98] : [0.28, 0.54, 0.82];
-        const colS = [0.10, 0.24, 0.48];
-        wfBatch.push(-76.2 + randRange(-1.0, 1.0), 10.0, z, randRange(1.6, 3.0), 0.96, 0.24, 0, randRange(0.18, 0.36), 0.18, -1.0, 0, 4, colL, colS, isFoam ? 0.06 : 0.0, 0.75);
+        wfBatch.push(-161.2 + randRange(-1.2, 1.0), 12.0, z, randRange(1.8, 3.4), 0.96, 0.24, 0, randRange(0.20, 0.40), 0.18, -1.0, 0, 4, isFoam ? [0.68, 0.86, 0.98] : [0.28, 0.54, 0.82], [0.10, 0.24, 0.48], isFoam ? 0.06 : 0.0, 0.75);
       }
     }
   }
   const wfGPU = wfBatch.upload();
 
-  // 7G. Windmill Sails (Local to WINDMILL_HUB, rotated via uModel)
-  const sailsCap = Math.round(5500 * strokeBudgetScale);
+  // 7H. Windmill Sails (instanced at each windmillHub via uModel)
+  const sailsCap = Math.round(5200 * strokeBudgetScale);
   const sailsBatch = new StrokeBatch(sailsCap + 500);
   {
     for (let arm = 0; arm < 4; arm++) {
       const a = (arm / 4) * Math.PI * 2;
       const ca = Math.cos(a), sa = Math.sin(a);
-      // Main wooden spar
-      const nSpar = Math.round(280 * strokeBudgetScale);
+      const nSpar = Math.round(260 * strokeBudgetScale);
       for (let i = 0; i < nSpar; i++) {
         const r = randRange(0.3, 7.6);
         const lx = ca * r + sa * randRange(-0.14, 0.14);
         const ly = sa * r - ca * randRange(-0.14, 0.14);
-        const lz = randRange(-0.12, 0.12);
-        sailsBatch.push(lx, ly, lz, randRange(0.45, 0.85), 0, 0, 1, randRange(0.14, 0.24), ca, sa, 0, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 0, 0.75);
+        sailsBatch.push(lx, ly, randRange(-0.12, 0.12), randRange(0.45, 0.85), 0, 0, 1, randRange(0.14, 0.24), ca, sa, 0, 1, [0.46, 0.32, 0.20], [0.16, 0.12, 0.14], 0, 0.75);
       }
-      // Lattice canvas slats
-      const nCanvas = Math.round(1050 * strokeBudgetScale);
+      const nCanvas = Math.round(1000 * strokeBudgetScale);
       for (let i = 0; i < nCanvas; i++) {
         const r = randRange(1.4, 7.4);
         const wOff = randRange(0.16, 1.45);
-        // Grid crossbars + canvas texture
-        const lx = ca * r - sa * wOff;
-        const ly = sa * r + ca * wOff;
-        const lz = 0.06;
         const isWoodBar = (Math.abs((r % 0.85) - 0.42) < 0.07) || wOff > 1.34;
-        const colL = isWoodBar ? [0.48, 0.32, 0.20] : [0.76, 0.74, 0.68];
-        const colS = isWoodBar ? [0.16, 0.12, 0.14] : [0.26, 0.32, 0.44];
-        sailsBatch.push(lx, ly, lz, randRange(0.45, 0.80), 0, 0, 1, randRange(0.16, 0.28), isWoodBar ? -sa : ca, isWoodBar ? ca : sa, 0, 1, colL, colS, 0, 0.72);
+        sailsBatch.push(ca * r - sa * wOff, sa * r + ca * wOff, 0.06, randRange(0.45, 0.80), 0, 0, 1, randRange(0.16, 0.28), isWoodBar ? -sa : ca, isWoodBar ? ca : sa, 0, 1, isWoodBar ? [0.48, 0.32, 0.20] : [0.76, 0.74, 0.68], isWoodBar ? [0.16, 0.12, 0.14] : [0.26, 0.32, 0.44], 0, 0.72);
       }
     }
   }
   const sailsGPU = sailsBatch.upload();
 
-  // 7H. Real-time Camera-Centered Toroidal Fine Grass
-  const GRASS_SPAN = 52.0;
+  // 7I. Real-time Camera-Centered Toroidal Fine Grass
+  const GRASS_SPAN = 54.0;
   const grassCap = Math.round(52000 * strokeBudgetScale);
   const grassBatch = new StrokeBatch(grassCap + 200);
   {
     for (let i = 0; i < grassCap; i++) {
-      // Slightly denser near center of toroidal cell
       const gx = (rand() - 0.5) * GRASS_SPAN;
       const gz = (rand() - 0.5) * GRASS_SPAN;
       const h = randRange(0.28, 0.62);
-      const colL = [randRange(0.22, 0.34), randRange(0.40, 0.56), randRange(0.18, 0.28)];
-      const colS = [0.06, 0.14, 0.16];
-      grassBatch.push(gx, 0, gz, h, 0, 0.25, 0.96, randRange(0.045, 0.085), 0, 1, 0, 0, colL, colS, 0, 0.55);
+      grassBatch.push(gx, 0, gz, h, 0, 0.25, 0.96, randRange(0.045, 0.085), 0, 1, 0, 0, [randRange(0.22, 0.34), randRange(0.40, 0.56), randRange(0.18, 0.28)], [0.06, 0.14, 0.16], 0, 0.55);
     }
   }
   const grassGPU = grassBatch.upload();
 
-  // 7I. Dynamic Articulated Horse & Knight Batch
+  // 7J. Dynamic Articulated Horse & Knight Batch
   const HERO_CAP = 7500;
   const heroBatch = new StrokeBatch(HERO_CAP);
-  // Pre-seed deterministic slots for hero strokes so seeds don't flicker between frames!
   const HERO_SEEDS = new Float32Array(HERO_CAP);
   for (let i = 0; i < HERO_CAP; i++) HERO_SEEDS[i] = 0.002 + rand() * 0.995;
   heroBatch.count = HERO_CAP;
   const heroGPU = heroBatch.upload(gl.DYNAMIC_DRAW);
 
   // Total active brushstrokes
-  const totalStrokes = skyGPU.count + mtnGPU.count + worldGPU.count + riverGPU.count + wfGPU.count + sailsGPU.count + grassGPU.count + 4800;
+  const totalStrokes = skyGPU.count + mtnGPU.count + terrRingGPU.count + worldGPU.count + riverGPU.count + wfGPU.count + sailsGPU.count * windmillHubs.length + grassGPU.count + 4800;
   statStrokes.textContent = `${(totalStrokes / 1000).toFixed(0)}K 筆觸`;
 
   // =========================================================================
@@ -2285,21 +2369,39 @@
 
       rapierWorld = new RAPIER.World({ x: 0, y: -24.0, z: 0 });
 
-      // Build terrain heightfield collider (128x128 grid over [-160, 160])
-      const nr = 128, nc = 128;
-      const hfSpan = 320.0;
+      // Build terrain heightfield collider (256x256 grid over [-1024, 1024])
+      const nr = 256, nc = 256;
+      const hfSpan = 2048.0;
       const heights = new Float32Array((nr + 1) * (nc + 1));
       for (let col = 0; col <= nc; col++) {
         const x = ((col / nc) - 0.5) * hfSpan;
         for (let row = 0; row <= nr; row++) {
           const z = ((row / nr) - 0.5) * hfSpan;
-          heights[col * (nr + 1) + row] = getRideableHeight(x, z);
+          heights[col * (nr + 1) + row] = getRawTerrainHeight(x, z, true);
         }
       }
       const hfDesc = RAPIER.ColliderDesc.heightfield(nr, nc, heights, { x: hfSpan, y: 1.0, z: hfSpan });
       rapierWorld.createCollider(hfDesc);
 
-      // Obstacle colliders (fences, stone walls, fallen logs)
+      // Exact arched deck colliders for all 4 stone bridges
+      for (const b of bridges) {
+        const segs = 7;
+        const yaw = Math.atan2(b.tx, b.tz);
+        const qy = Math.sin(yaw * 0.5), qw = Math.cos(yaw * 0.5);
+        for (let s = 0; s < segs; s++) {
+          const along = mix(-b.halfLen, b.halfLen, (s + 0.5) / segs);
+          const u = Math.abs(along) / b.halfLen;
+          const deckY = WATER_Y + 1.35 + b.archRise * Math.pow(Math.cos(u * Math.PI * 0.5), 1.35);
+          const segLen = (b.halfLen * 2) / segs + 0.4;
+          rapierWorld.createCollider(
+            RAPIER.ColliderDesc.cuboid(b.halfWidth, 0.25, segLen * 0.5)
+              .setTranslation(b.x + along * b.tx, deckY - 0.25, b.z + along * b.tz)
+              .setRotation({ x: 0, y: qy, z: 0, w: qw })
+          );
+        }
+      }
+
+      // 16 Obstacle colliders (fences, stone walls, fallen logs)
       for (const ob of obstacles) {
         const qy = Math.sin(ob.yaw * 0.5), qw = Math.cos(ob.yaw * 0.5);
         const colDesc = RAPIER.ColliderDesc.cuboid(ob.halfWidth, ob.height * 0.5, ob.halfDepth)
@@ -2308,7 +2410,7 @@
         rapierWorld.createCollider(colDesc);
       }
 
-      // Solid building colliders
+      // Solid building colliders across open world
       const buildingBox = (bx, bz, hx, hy, hz, yaw = 0) => {
         const by = getRawTerrainHeight(bx, bz);
         const qy = Math.sin(yaw * 0.5), qw = Math.cos(yaw * 0.5);
@@ -2320,16 +2422,19 @@
       };
       buildingBox(COTTAGE_POS.x, COTTAGE_POS.z, 3.2, 2.5, 2.5, 0.48);
       buildingBox(WINDMILL_POS.x, WINDMILL_POS.z, 3.3, 5.0, 3.3, 0);
+      buildingBox(WINDMILL2_POS.x, WINDMILL2_POS.z, 3.3, 5.0, 3.3, 0);
       buildingBox(CHURCH_POS.x, CHURCH_POS.z, 4.0, 6.0, 6.2, 0.15);
+      buildingBox(WATCHTOWER_POS.x, WATCHTOWER_POS.z, 3.8, 6.0, 3.8, 0);
       for (const vh of VILLAGE_HOUSES) buildingBox(vh.x, vh.z, vh.w * 0.5, vh.h * 0.5, vh.d * 0.5, vh.yaw);
+      for (const lh of LAKE_HOUSES) buildingBox(lh.x, lh.z, lh.w * 0.5, lh.h * 0.5, lh.d * 0.5, lh.yaw);
 
       // Kinematic horse rider capsule + CharacterController
       const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(player.x, player.y + 0.95, player.z);
       rapierBody = rapierWorld.createRigidBody(bodyDesc);
       rapierCollider = rapierWorld.createCollider(RAPIER.ColliderDesc.capsule(0.45, 0.50), rapierBody);
       rapierCtrl = rapierWorld.createCharacterController(0.08);
-      rapierCtrl.setMaxSlopeClimbAngle(52 * Math.PI / 180);
-      rapierCtrl.setMinSlopeSlideAngle(55 * Math.PI / 180);
+      rapierCtrl.setMaxSlopeClimbAngle(54 * Math.PI / 180);
+      rapierCtrl.setMinSlopeSlideAngle(58 * Math.PI / 180);
       rapierCtrl.enableSnapToGround(0.35);
 
       physicsMode = 'rapier';
@@ -2363,9 +2468,9 @@
       rapierCtrl.computeColliderMovement(rapierCollider, desired);
       const corr = rapierCtrl.computedMovement();
       const pos = rapierBody.translation();
-      const nx = clamp(pos.x + corr.x, -148, 148);
+      const nx = clamp(pos.x + corr.x, -WORLD_BOUND, WORLD_BOUND);
       const ny = pos.y + corr.y;
-      const nz = clamp(pos.z + corr.z, -148, 148);
+      const nz = clamp(pos.z + corr.z, -WORLD_BOUND, WORLD_BOUND);
       rapierBody.setNextKinematicTranslation({ x: nx, y: ny, z: nz });
       rapierWorld.step();
 
@@ -2388,11 +2493,10 @@
       }
     } else {
       // Built-in fallback physics
-      let nx = clamp(player.x + player.vx * dt, -148, 148);
-      let nz = clamp(player.z + player.vz * dt, -148, 148);
+      let nx = clamp(player.x + player.vx * dt, -WORLD_BOUND, WORLD_BOUND);
+      let nz = clamp(player.z + player.vz * dt, -WORLD_BOUND, WORLD_BOUND);
       let ny = player.y + player.vy * dt;
 
-      // Obstacle AABB/OBB collision (can jump cleanly over!)
       const horseRad = 0.58;
       for (const ob of obstacles) {
         const dx = nx - ob.x, dz = nz - ob.z;
@@ -2403,10 +2507,8 @@
         if (Math.abs(lx) < ex && Math.abs(lz) < ez) {
           const topY = ob.y + ob.height;
           if (ny >= topY - 0.18) {
-            // Land on or clear above obstacle
             if (ny < topY && player.vy <= 0) { ny = topY; player.vy = 0; player.grounded = true; }
           } else {
-            // Push horizontally out of obstacle
             const penX = ex - Math.abs(lx);
             const penZ = ez - Math.abs(lz);
             let plx = lx, plz = lz;
@@ -2419,7 +2521,6 @@
         }
       }
 
-      // Building cylinder push-out
       const pushCircle = (bx, bz, rad) => {
         const dx = nx - bx, dz = nz - bz;
         const d = Math.hypot(dx, dz);
@@ -2430,10 +2531,12 @@
       };
       pushCircle(COTTAGE_POS.x, COTTAGE_POS.z, 4.2);
       pushCircle(WINDMILL_POS.x, WINDMILL_POS.z, 4.0);
+      pushCircle(WINDMILL2_POS.x, WINDMILL2_POS.z, 4.0);
       pushCircle(CHURCH_POS.x, CHURCH_POS.z, 6.2);
+      pushCircle(WATCHTOWER_POS.x, WATCHTOWER_POS.z, 4.5);
       for (const vh of VILLAGE_HOUSES) pushCircle(vh.x, vh.z, 3.6);
+      for (const lh of LAKE_HOUSES) pushCircle(lh.x, lh.z, 3.6);
 
-      // Keep out of deep river unless on bridge or jumping
       const gY = getRideableHeight(nx, nz);
       if (ny <= gY) {
         ny = gY;
@@ -2891,15 +2994,17 @@
   btnTour.addEventListener('click', toggleTour);
   btnHelp.addEventListener('click', () => helpPanel.classList.toggle('open'));
 
-  // Panoramic Tour Keyframes (Catmull-Rom spline around valley)
+  // Panoramic Tour Keyframes (Catmull-Rom spline across 2km open world)
   const tourWaypoints = [
-    { eye: [-18, 12, 74],   target: [0, 8, 15] },       // Over sunflowers looking at valley & swirls
-    { eye: [-52, 18, -14],  target: [-82, 11, 10] },    // Waterfall & West Stone Bridge
-    { eye: [-34, 24, -56],  target: [15, 20, -90] },    // Towering Hero Cypress framing starry sky
-    { eye: [22, 17, -64],   target: [42, 10, -40] },    // Rotating Windmill & wheat field
-    { eye: [70, 14, -42],   target: [96, 13, -16] },    // Village & tall Church Steeple
-    { eye: [52, 8, 42],     target: [62, 3, 14] },      // East Stone Bridge & River reflections
-    { eye: [0, 42, 95],     target: [5, 22, -40] }      // Grand panoramic vista of 3 mountain layers & moon
+    { eye: [-20, 14, 78],    target: [0, 8, 12] },        // Sunflowers & Heartland Ring
+    { eye: [-118, 28, -28],  target: [-168, 14, 6] },     // Grand Cliff Waterfall Gorge
+    { eye: [-260, 32, 175],  target: [-312, 16, 204] },   // Hilltop Watchtower Ruin
+    { eye: [-58, 28, -235],  target: [-90, 18, -280] },   // Northern Cypress Grove & Swirls
+    { eye: [175, 28, -145],  target: [230, 18, -172] },   // East Windmill & Wheat Plains
+    { eye: [235, 16, 65],    target: [310, 4, 105] },     // Moonlit Lake & Lakeside Hamlet
+    { eye: [64, 18, -48],    target: [96, 13, -18] },     // Church Steeple Village
+    { eye: [-15, 22, 240],   target: [-46, 10, 285] },    // Southern Sunflower Plateau
+    { eye: [0, 95, 220],     target: [15, 24, -60] }      // High Panoramic Vista of 3 Mountain Layers
   ];
   function catmullRom(p0, p1, p2, p3, t) {
     const t2 = t * t, t3 = t2 * t;
@@ -2945,7 +3050,7 @@
   const uLoc = {};
   for (const name of [
     'uView','uProj','uModel','uUseModel','uCamPos','uViewport','uTime','uWaterY',
-    'uIsGrass','uGrassSpan','uTerrainTex','uTerrainWorldSpan',
+    'uIsGrass','uGrassSpan','uIsTerrain','uTerrainRingSpan','uTerrainTex','uTerrainWorldSpan',
     'uMoonDir','uLanternPos','uWarmLights','uReflTex','uReflVP','uHasRefl'
   ]) {
     uLoc[name] = gl.getUniformLocation(strokeProg, name);
@@ -2965,6 +3070,8 @@
     gl.uniform1f(uLoc.uWaterY, WATER_Y);
     gl.uniform1i(uLoc.uIsGrass, 0);
     gl.uniform1f(uLoc.uGrassSpan, GRASS_SPAN);
+    gl.uniform1i(uLoc.uIsTerrain, 0);
+    gl.uniform1f(uLoc.uTerrainRingSpan, TERRAIN_RING_SPAN);
     gl.uniform1f(uLoc.uTerrainWorldSpan, TERRAIN_WORLD_SPAN);
     gl.uniform3fv(uLoc.uMoonDir, MOON_DIR);
     gl.uniform3fv(uLoc.uLanternPos, player.lanternPos);
@@ -3002,6 +3109,12 @@
     }
     frameCounter++;
     fpsCheckTimer += rawDt;
+    if (frameCounter === 1 || frameCounter % 12 === 0) {
+      const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+      const deg = ((-cam.yaw * 180 / Math.PI) % 360 + 360) % 360;
+      const compass = dirs[Math.round(deg / 45) % 8];
+      statRegion.textContent = `${getRegionName(player.x, player.z)} (${Math.round(player.x)}, ${Math.round(player.z)}) ${compass}`;
+    }
     if (fpsCheckTimer >= 1.2) {
       const targetLow = isMobile ? 30 : 42;
       const targetHigh = isMobile ? 52 : 56;
@@ -3039,6 +3152,7 @@
       targetSpeed = 8.8;
 
       for (const ob of obstacles) {
+        if (!ob.onLoop) continue;
         let ds = ob.s - player.pathS;
         if (ds < 0) ds += totalPathLen;
         if (ds > 1.6 && ds < 5.0 && player.grounded) {
@@ -3113,15 +3227,17 @@
     const time = simTime;
     buildHeroStrokes(time);
 
-    const windmillRotMat = mat4RotateZ(mat4Translate(mat4Identity(), WINDMILL_HUB.x, WINDMILL_HUB.y, WINDMILL_HUB.z), time * 0.65);
+    const windmillRotMats = windmillHubs.map((h, i) =>
+      mat4RotateZ(mat4Translate(mat4Identity(), h.x, h.y, h.z), time * 0.65 + i * 0.9)
+    );
 
-    // 4. Pass 0: Render River Reflection FBO (throttle slightly on very low FPS)
+    // 4. Pass 0: Render River & Lake Reflection FBO (throttle slightly on very low FPS)
     const updateRefl = (frameCounter === 1) || (fpsAvg >= 28) || (frameCounter % 3 === 0) || (camOverride !== null);
     if (updateRefl) {
       const reflEye = [cam.pos[0], 2 * WATER_Y - cam.pos[1], cam.pos[2]];
       const reflTgt = [cam.target[0], 2 * WATER_Y - cam.target[1], cam.target[2]];
       const reflView = mat4LookAt(reflEye, reflTgt, [0, 1, 0]);
-      const reflProj = mat4Perspective(52 * Math.PI / 180, canvas.width / canvas.height, 0.4, 1400);
+      const reflProj = mat4Perspective(52 * Math.PI / 180, canvas.width / canvas.height, 0.4, 4800);
       lastReflVP = mat4Mul(reflProj, reflView);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, reflFBO);
@@ -3144,9 +3260,11 @@
       drawBatch(mtnGPU);
       drawBatch(wfGPU);
       drawBatch(heroGPU);
-      gl.uniformMatrix4fv(uLoc.uModel, false, windmillRotMat);
       gl.uniform1i(uLoc.uUseModel, 1);
-      drawBatch(sailsGPU);
+      for (const wmMat of windmillRotMats) {
+        gl.uniformMatrix4fv(uLoc.uModel, false, wmMat);
+        drawBatch(sailsGPU);
+      }
       gl.uniform1i(uLoc.uUseModel, 0);
       cam.pos = savedCamPos;
     }
@@ -3160,7 +3278,7 @@
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     const view = mat4LookAt(cam.pos, cam.target, [0, 1, 0]);
-    const proj = mat4Perspective(52 * Math.PI / 180, canvas.width / canvas.height, 0.35, 1400);
+    const proj = mat4Perspective(52 * Math.PI / 180, canvas.width / canvas.height, 0.35, 4800);
 
     drawSolidMesh(skySolidMesh, view, proj, true);
     gl.enable(gl.POLYGON_OFFSET_FILL);
@@ -3171,14 +3289,21 @@
     bindCommonStrokeUniforms(view, proj, canvas.width, canvas.height, time, lastReflVP, true);
     drawBatch(skyGPU);
     drawBatch(mtnGPU);
+
+    gl.uniform1i(uLoc.uIsTerrain, 1);
+    drawBatch(terrRingGPU);
+    gl.uniform1i(uLoc.uIsTerrain, 0);
+
     drawBatch(worldGPU);
     drawBatch(riverGPU);
     drawBatch(wfGPU);
     drawBatch(heroGPU);
 
-    gl.uniformMatrix4fv(uLoc.uModel, false, windmillRotMat);
     gl.uniform1i(uLoc.uUseModel, 1);
-    drawBatch(sailsGPU);
+    for (const wmMat of windmillRotMats) {
+      gl.uniformMatrix4fv(uLoc.uModel, false, wmMat);
+      drawBatch(sailsGPU);
+    }
     gl.uniform1i(uLoc.uUseModel, 0);
 
     gl.uniform1i(uLoc.uIsGrass, 1);
@@ -3211,13 +3336,18 @@
         totalStrokes,
         renderScale,
         fps: Math.round(fpsAvg),
+        region: getRegionName(player.x, player.z),
         player: { x: player.x, y: player.y, z: player.z, grounded: player.grounded, speed: player.speed, yaw: player.yaw, pathS: player.pathS },
         cam: { pos: cam.pos, target: cam.target, dist: cam.dist },
-        obstacles: obstacles.map(o => ({ type: o.type, x: o.x, y: o.y, z: o.z, s: o.s })),
+        obstacles: obstacles.map(o => ({ type: o.type, x: o.x, y: o.y, z: o.z, s: o.s, onLoop: o.onLoop })),
         bridges: bridges.map(b => ({ x: b.x, z: b.z, s: b.s }))
       };
     },
     setPaused(v) { paused = !!v; },
+    stepOnly(dt = 0.016, steps = 1, rawDtOverride = null) {
+      const rdt = rawDtOverride !== null ? rawDtOverride : dt;
+      for (let i = 0; i < steps; i++) stepSim(dt, rdt);
+    },
     stepAndRender(dt = 0.016, steps = 1, rawDtOverride = null) {
       const rdt = rawDtOverride !== null ? rawDtOverride : dt;
       for (let i = 0; i < steps; i++) stepSim(dt, rdt);
@@ -3233,15 +3363,36 @@
       btnTour.classList.toggle('active', tourMode);
       btnTour.textContent = tourMode ? '全景巡遊：開' : '全景巡遊：關';
     },
+    warpTo(x, z, yaw = 0) {
+      player.x = clamp(x, -WORLD_BOUND, WORLD_BOUND);
+      player.z = clamp(z, -WORLD_BOUND, WORLD_BOUND);
+      player.y = getRideableHeight(player.x, player.z);
+      player.yaw = yaw;
+      player.vx = 0; player.vy = 0; player.vz = 0;
+      player.grounded = true;
+      if (rapierBody) {
+        rapierBody.setTranslation({ x: player.x, y: player.y + 0.95, z: player.z }, true);
+        rapierBody.setNextKinematicTranslation({ x: player.x, y: player.y + 0.95, z: player.z });
+      }
+      statRegion.textContent = `${getRegionName(player.x, player.z)} (${Math.round(player.x)}, ${Math.round(player.z)}) N`;
+    },
     warpNearObstacle(idx = 0) {
       const ob = obstacles[idx % obstacles.length];
-      const back = samplePathByS(ob.s - 6.0);
-      player.x = back.x; player.z = back.z;
-      player.y = getRideableHeight(back.x, back.z);
-      player.yaw = Math.atan2(back.tx, back.tz);
-      player.vx = back.tx * 8.8; player.vz = back.tz * 8.8; player.vy = 0;
-      player.grounded = true;
-      player.pathS = back.s;
+      if (ob.onLoop) {
+        const back = samplePathByS(ob.s - 6.0);
+        player.x = back.x; player.z = back.z;
+        player.y = getRideableHeight(back.x, back.z);
+        player.yaw = Math.atan2(back.tx, back.tz);
+        player.vx = back.tx * 8.8; player.vz = back.tz * 8.8; player.vy = 0;
+        player.grounded = true;
+        player.pathS = back.s;
+      } else {
+        player.x = ob.x - 6.0; player.z = ob.z;
+        player.y = getRideableHeight(player.x, player.z);
+        player.yaw = Math.PI * 0.5;
+        player.vx = 0; player.vz = 0; player.vy = 0;
+        player.grounded = true;
+      }
       if (rapierBody) {
         rapierBody.setTranslation({ x: player.x, y: player.y + 0.95, z: player.z }, true);
         rapierBody.setNextKinematicTranslation({ x: player.x, y: player.y + 0.95, z: player.z });
